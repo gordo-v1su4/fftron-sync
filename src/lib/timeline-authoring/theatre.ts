@@ -12,7 +12,7 @@ let theatreContext: TheatreAuthoringContext | null = null;
 export const ensureTheatreAuthoringContext = (): TheatreAuthoringContext => {
   if (theatreContext) return theatreContext;
 
-  const projectId = 'resolume-gen-authoring';
+  const projectId = 'fftron-sync-authoring';
   const project = getProject(projectId);
   const sheet = project.sheet('timeline-authoring');
 

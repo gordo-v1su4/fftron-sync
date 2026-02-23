@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "resolume-gen",
+      "name": "fftron-sync",
       "dependencies": {
         "@tauri-apps/api": "^2.0.0",
         "@theatre/core": "^0.7.2",

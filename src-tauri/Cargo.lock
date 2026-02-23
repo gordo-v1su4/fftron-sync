@@ -740,6 +740,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fftron-sync"
+version = "0.1.0"
+dependencies = [
+ "ffmpeg-next",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "field-offset"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2742,19 +2755,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
-]
-
-[[package]]
-name = "resolume-gen"
-version = "0.1.0"
-dependencies = [
- "ffmpeg-next",
- "pretty_assertions",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "thiserror 1.0.69",
 ]
 
 [[package]]

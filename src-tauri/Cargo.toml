@@ -1,8 +1,8 @@
 [package]
-name = "resolume-gen"
+name = "fftron-sync"
 version = "0.1.0"
 description = "Reactive auto-editing engine shell"
-authors = ["resolume-gen"]
+authors = ["fftron-sync"]
 edition = "2021"
 
 [features]
@@ -10,7 +10,7 @@ default = []
 native-ffmpeg = ["dep:ffmpeg-next"]
 
 [lib]
-name = "resolume_gen_lib"
+name = "fftron_sync_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

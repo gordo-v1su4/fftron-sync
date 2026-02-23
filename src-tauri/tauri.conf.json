@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Resolume Gen",
+  "productName": "FFTRON Sync",
   "version": "0.1.0",
-  "identifier": "com.resolumegen.app",
+  "identifier": "com.fftron.sync",
   "build": {
     "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun run build",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Resolume Gen",
+        "title": "FFTRON Sync",
         "width": 1280,
         "height": 820,
         "resizable": true
