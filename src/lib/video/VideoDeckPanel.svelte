@@ -78,6 +78,13 @@
     return quantizeMode === 'bar' ? beatDuration * 4 : beatDuration;
   };
 
+  const getTransportSlotIndex = (): number => {
+    const slotDuration = getSlotDuration();
+    if (!Number.isFinite(slotDuration) || slotDuration <= 0) return -1;
+    const elapsedSeconds = Math.max(0, (Date.now() - $tempoState.downbeatEpochMs) / 1000);
+    return Math.floor(elapsedSeconds / slotDuration);
+  };
+
   const queueQuantizedSwitch = (slotIndex: number) => {
     if (clips.length < 2 || !selectedClipId) return;
     const currentIndex = clips.findIndex((clip) => clip.id === selectedClipId);
@@ -90,12 +97,9 @@
     status = `Quantized ${quantizeMode} switch: ${clips[nextIndex].name} (slot ${slotIndex})`;
   };
 
-  const maybeQuantizedSwitch = (time: number) => {
+  const maybeQuantizedSwitch = () => {
     if (!autoSwitchEnabled || !player || player.paused || clips.length < 2) return;
-    const slotDuration = getSlotDuration();
-    if (!Number.isFinite(slotDuration) || slotDuration <= 0) return;
-
-    const slotIndex = Math.floor(time / slotDuration);
+    const slotIndex = getTransportSlotIndex();
     if (slotIndex > lastQuantizeSlot) {
       if (lastQuantizeSlot >= 0) {
         queueQuantizedSwitch(slotIndex);
@@ -118,8 +122,7 @@
 
   const play = async () => {
     if (!player) return;
-    const slotDuration = getSlotDuration();
-    lastQuantizeSlot = slotDuration > 0 ? Math.floor(currentTime / slotDuration) : -1;
+    lastQuantizeSlot = getTransportSlotIndex();
     await player.play();
     status = `Playing ${selectedClip()?.name ?? 'clip'} in ${$activeSection}`;
   };
@@ -146,7 +149,7 @@
 <section class="deck-shell">
   <header class="deck-head">
     <h2>Video Deck</h2>
-    <p>Upload clips, choose a section, and scrub on the timeline.</p>
+    <p>Upload clips, assign sections, and run quantized switching on beat or bar.</p>
   </header>
 
   <div class="deck-grid">
@@ -189,7 +192,7 @@
           }}
           on:timeupdate={() => {
             currentTime = player?.currentTime ?? 0;
-            maybeQuantizedSwitch(currentTime);
+            maybeQuantizedSwitch();
           }}
         >
           <track kind="captions" srclang="en" label="Captions" src="data:text/vtt,WEBVTT" />
@@ -221,32 +224,38 @@
 
 <style>
   .deck-shell {
-    border: 1px solid #3f3f46;
-    border-radius: 0.75rem;
-    padding: 1rem;
-    background: rgba(10, 10, 11, 0.9);
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    padding: 0.65rem;
+    background: rgba(15, 15, 16, 0.94);
+  }
+
+  .deck-head {
+    margin-bottom: 0.55rem;
   }
 
   .deck-head h2 {
     margin: 0;
+    font-size: 1.02rem;
   }
 
   .deck-head p {
-    margin: 0.3rem 0 0.9rem;
-    color: #a1a1aa;
+    margin: 0.2rem 0 0;
+    color: var(--muted);
+    font-size: 0.76rem;
   }
 
   .deck-grid {
     display: grid;
-    grid-template-columns: 300px minmax(0, 1fr);
-    gap: 0.9rem;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 0.6rem;
   }
 
   .clip-bin {
-    border: 1px solid #3f3f46;
-    border-radius: 0.65rem;
-    padding: 0.65rem;
-    background: #111113;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 0.45rem;
+    background: var(--surface-0);
   }
 
   #video-upload {
@@ -257,116 +266,141 @@
     display: inline-block;
     width: 100%;
     text-align: center;
-    padding: 0.5rem 0.7rem;
-    border-radius: 0.55rem;
-    background: #f59e0b;
-    border: 1px solid #f59e0b;
-    color: #fff;
+    height: 1.95rem;
+    line-height: 1.85rem;
+    padding: 0 0.65rem;
+    border-radius: 0.42rem;
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    color: #1a1408;
+    font-size: 0.78rem;
+    font-weight: 700;
     cursor: pointer;
-    margin-bottom: 0.7rem;
+    margin-bottom: 0.45rem;
   }
 
   .clip-list {
     display: grid;
-    gap: 0.45rem;
-    max-height: 430px;
+    gap: 0.3rem;
+    max-height: 320px;
     overflow: auto;
   }
 
   .empty {
-    color: #a1a1aa;
+    color: var(--muted);
     margin: 0;
+    font-size: 0.74rem;
   }
 
   .clip-card {
-    border: 1px solid #3f3f46;
-    border-radius: 0.5rem;
-    padding: 0.5rem;
-    background: #17171a;
+    border: 1px solid var(--border);
+    border-radius: 0.4rem;
+    padding: 0.32rem;
+    background: var(--surface-1);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      'pick remove'
+      'meta remove';
+    column-gap: 0.35rem;
+    row-gap: 0.1rem;
   }
 
   .clip-card.active {
-    border-color: #f59e0b;
+    border-color: var(--accent);
   }
 
   .clip-pick {
+    grid-area: pick;
     border: none;
     background: transparent;
-    color: #fafafa;
+    color: var(--text);
     text-align: left;
     width: 100%;
     cursor: pointer;
     padding: 0;
     font-weight: 600;
+    font-size: 0.76rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .clip-card p {
-    margin: 0.3rem 0;
-    color: #a1a1aa;
-    font-size: 0.8rem;
+    grid-area: meta;
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.69rem;
   }
 
   .clip-remove {
-    border: 1px solid #3f3f46;
-    background: #27272a;
-    color: #fafafa;
-    border-radius: 0.35rem;
-    padding: 0.22rem 0.45rem;
+    grid-area: remove;
+    align-self: center;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    border-radius: 0.32rem;
+    height: 1.42rem;
+    padding: 0 0.4rem;
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: 0.67rem;
   }
 
   .player-shell {
-    border: 1px solid #3f3f46;
-    border-radius: 0.65rem;
-    padding: 0.65rem;
-    background: #111113;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 0.45rem;
+    background: var(--surface-0);
     display: grid;
-    gap: 0.65rem;
+    gap: 0.45rem;
   }
 
   video,
   .placeholder {
     width: 100%;
-    height: 330px;
-    border-radius: 0.6rem;
-    border: 1px solid #3f3f46;
-    background: #09090b;
+    height: 260px;
+    border-radius: 0.42rem;
+    border: 1px solid var(--border);
+    background: #09090a;
   }
 
   .placeholder {
     display: grid;
     place-items: center;
-    color: #a1a1aa;
+    color: var(--muted);
     text-align: center;
     padding: 1rem;
+    font-size: 0.8rem;
   }
 
   .transport-row {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.32rem;
     flex-wrap: wrap;
   }
 
   .transport-row button {
-    border-radius: 0.45rem;
-    border: 1px solid #3f3f46;
-    background: #27272a;
-    color: #f4f4f5;
-    padding: 0.35rem 0.6rem;
+    height: 1.78rem;
+    border-radius: 0.36rem;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 0 0.5rem;
+    font-size: 0.73rem;
+    font-weight: 600;
     cursor: pointer;
   }
 
   .transport-row span {
-    color: #a1a1aa;
-    font-size: 0.88rem;
+    color: var(--muted);
+    font-size: 0.73rem;
   }
 
   .status {
     margin: 0;
-    color: #10b981;
-    font-size: 0.88rem;
+    color: var(--accent-ok);
+    font-size: 0.73rem;
   }
 
   @media (max-width: 1100px) {
@@ -376,7 +410,7 @@
 
     video,
     .placeholder {
-      height: 280px;
+      height: 230px;
     }
   }
 </style>

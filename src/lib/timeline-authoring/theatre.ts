@@ -16,14 +16,24 @@ export const ensureTheatreAuthoringContext = async (): Promise<TheatreAuthoringC
   const getProject =
     theatreModule.getProject ?? (theatreModule.default as { getProject?: typeof theatreModule.getProject })?.getProject;
   if (!getProject) {
-    throw new Error('Theatre getProject is unavailable');
+    theatreContext = {
+      projectId: 'fftron-sync-authoring',
+      sheet: {} as ISheet
+    };
+    return theatreContext;
   }
 
   const projectId = 'fftron-sync-authoring';
-  const project = getProject(projectId);
-  const sheet = project.sheet('timeline-authoring');
+  try {
+    const project = getProject(projectId);
+    const sheet = project.sheet('timeline-authoring');
 
-  theatreContext = { projectId, sheet };
+    theatreContext = { projectId, sheet };
+  } catch {
+    // Browser preview can load without a fully initialized Theatre studio state.
+    theatreContext = { projectId, sheet: {} as ISheet };
+  }
+
   return theatreContext;
 };
 

@@ -27,18 +27,36 @@
 
 <style>
   .stage-shell {
-    border: 1px solid #3f3f46;
-    border-radius: 0.75rem;
-    padding: 1rem;
-    background: rgba(10, 10, 11, 0.9);
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    padding: 0.65rem;
+    background: rgba(15, 15, 16, 0.94);
+  }
+
+  h2 {
+    margin: 0 0 0.35rem;
+    font-size: 1rem;
+  }
+
+  p {
+    margin: 0 0 0.2rem;
+    font-size: 0.74rem;
+    color: var(--muted);
   }
 
   .canvas-wrap {
     width: 100%;
-    height: 360px;
-    margin-top: 0.75rem;
-    border-radius: 0.6rem;
+    height: 298px;
+    margin-top: 0.45rem;
+    border-radius: 0.45rem;
     overflow: hidden;
-    border: 1px solid #3f3f46;
+    border: 1px solid var(--border);
+    background: var(--surface-0);
+  }
+
+  @media (max-width: 1180px) {
+    .canvas-wrap {
+      height: 220px;
+    }
   }
 </style>

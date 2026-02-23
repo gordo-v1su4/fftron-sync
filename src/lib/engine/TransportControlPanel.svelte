@@ -34,8 +34,9 @@
       tempoState.set(tempo);
       bpmInput = Math.round(tempo.bpm * 100) / 100;
       scheduledActions.set(await listScheduledActions());
+      status = 'Runtime state synced';
     } catch (error) {
-      status = `Tauri runtime unavailable in browser preview: ${getErrorMessage(error)}`;
+      status = `Runtime sync failed: ${getErrorMessage(error)}`;
     }
   };
 
@@ -136,7 +137,7 @@
   <div class="line">
     <label for="bpm-input">BPM</label>
     <input id="bpm-input" type="number" bind:value={bpmInput} min="20" max="300" step="0.01" />
-    <button on:click={applyBpm}>Set</button>
+    <button class="emph" on:click={applyBpm}>Set</button>
     <button on:click={runTap}>Tap</button>
     <button on:click={() => nudge(-0.1)}>-0.1</button>
     <button on:click={() => nudge(0.1)}>+0.1</button>
@@ -150,9 +151,9 @@
         <option value={option}>{option}</option>
       {/each}
     </select>
-    <button on:click={applyGrid}>Apply Grid</button>
+    <button class="emph" on:click={applyGrid}>Apply Grid</button>
     <button on:click={queuePreview}>Queue Preview</button>
-    <button on:click={queueMarkers}>Queue Section Markers</button>
+    <button class="emph" on:click={queueMarkers}>Queue Markers</button>
     <button on:click={flushDue}>Pop Due</button>
   </div>
 
@@ -170,7 +171,7 @@
       <option value="webgpu" disabled={!$runtimeCapabilities.webgpu}>webgpu</option>
     </select>
 
-    <button on:click={refresh}>Refresh Capabilities</button>
+    <button class="emph" on:click={refresh}>Refresh</button>
   </div>
 
   <p class="meta">
@@ -185,52 +186,65 @@
 
 <style>
   .panel {
-    border: 1px solid #3f3f46;
-    border-radius: 0.75rem;
-    padding: 1rem;
-    background: rgba(10, 10, 11, 0.9);
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    padding: 0.65rem;
+    background: rgba(15, 15, 16, 0.94);
+  }
+
+  h2 {
+    margin: 0 0 0.42rem;
+    font-size: 1rem;
   }
 
   .line {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.32rem;
     flex-wrap: wrap;
     align-items: center;
-    margin-bottom: 0.6rem;
+    margin-bottom: 0.42rem;
   }
 
   label {
-    font-size: 0.85rem;
-    color: #a1a1aa;
+    font-size: 0.72rem;
+    color: var(--muted);
+    letter-spacing: 0.01em;
   }
 
   input,
   select,
   button {
-    border-radius: 0.5rem;
-    border: 1px solid #3f3f46;
-    background: #18181b;
-    color: #f4f4f5;
-    padding: 0.45rem 0.65rem;
+    height: 1.9rem;
+    border-radius: 0.42rem;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 0 0.52rem;
     font: inherit;
+    font-size: 0.78rem;
+    line-height: 1;
   }
 
   button {
     cursor: pointer;
-    background: #f59e0b;
-    border-color: #f59e0b;
-    color: #1c1917;
     font-weight: 600;
   }
 
+  button.emph {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a1408;
+  }
+
   .meta {
-    margin: 0.3rem 0;
-    color: #a1a1aa;
-    font-size: 0.88rem;
+    margin: 0.14rem 0;
+    color: var(--muted);
+    font-size: 0.73rem;
   }
 
   .status {
-    margin-top: 0.6rem;
-    color: #10b981;
+    margin-top: 0.42rem;
+    color: var(--accent-ok);
+    font-size: 0.74rem;
   }
 </style>

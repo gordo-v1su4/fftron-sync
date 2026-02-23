@@ -83,44 +83,46 @@
 
 <style>
   .timeline-shell {
-    border: 1px solid #3f3f46;
-    border-radius: 0.7rem;
-    padding: 0.75rem;
-    background: #111113;
+    border: 1px solid var(--border);
+    border-radius: 0.45rem;
+    padding: 0.5rem;
+    background: var(--surface-0);
   }
 
   .timeline-head {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.3rem;
   }
 
   .timeline-head h3 {
     margin: 0;
-    font-size: 0.95rem;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
 
   .timeline-head p {
     margin: 0;
-    color: #a1a1aa;
-    font-size: 0.85rem;
+    color: var(--muted);
+    font-size: 0.74rem;
   }
 
   .ruler {
     position: relative;
-    height: 18px;
-    border-radius: 0.45rem;
-    background: #18181b;
-    border: 1px solid #3f3f46;
+    height: 14px;
+    border-radius: 0.32rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
     overflow: hidden;
   }
 
   .progress {
     position: absolute;
     inset: 0 auto 0 0;
-    background: linear-gradient(90deg, #f59e0b, #fbbf24);
-    opacity: 0.25;
+    background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+    opacity: 0.22;
   }
 
   .ticks {
@@ -133,68 +135,71 @@
     top: 0;
     width: 1px;
     height: 100%;
-    background: rgba(250, 250, 250, 0.18);
+    background: rgba(250, 250, 250, 0.14);
   }
 
   .marker {
     position: absolute;
     top: 1px;
     width: 2px;
-    height: 14px;
-    background: #10b981;
+    height: 10px;
+    background: var(--accent-ok);
     transform: translateX(-1px);
   }
 
   .scrub {
     width: 100%;
-    margin-top: 0.45rem;
+    margin-top: 0.34rem;
   }
 
   .section-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem;
-    margin-top: 0.55rem;
+    gap: 0.24rem;
+    margin-top: 0.4rem;
   }
 
   .section-row button {
-    border: 1px solid #3f3f46;
-    border-radius: 0.45rem;
-    background: #27272a;
-    color: #f4f4f5;
-    padding: 0.3rem 0.52rem;
-    font-size: 0.78rem;
+    border: 1px solid var(--border);
+    border-radius: 0.32rem;
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 0.2rem 0.42rem;
+    font-size: 0.66rem;
+    font-weight: 600;
     cursor: pointer;
     text-transform: uppercase;
+    letter-spacing: 0.02em;
   }
 
   .section-row button.active {
-    background: #f59e0b;
-    border-color: #f59e0b;
-    color: #1c1917;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a1408;
     font-weight: 600;
   }
 
   .quantize-row {
     display: flex;
-    gap: 0.35rem;
+    gap: 0.24rem;
     flex-wrap: wrap;
-    margin-top: 0.5rem;
+    margin-top: 0.34rem;
   }
 
   .quantize-row button {
-    border: 1px solid #3f3f46;
-    border-radius: 0.4rem;
-    background: #27272a;
-    color: #f4f4f5;
-    padding: 0.28rem 0.5rem;
-    font-size: 0.76rem;
+    border: 1px solid var(--border);
+    border-radius: 0.32rem;
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 0.2rem 0.42rem;
+    font-size: 0.66rem;
+    font-weight: 600;
     cursor: pointer;
   }
 
   .quantize-row button.active {
-    background: #10b981;
-    border-color: #10b981;
+    background: var(--accent-ok);
+    border-color: var(--accent-ok);
     color: #052e22;
     font-weight: 600;
   }

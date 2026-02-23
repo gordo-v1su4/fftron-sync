@@ -6,8 +6,12 @@
 </script>
 
 <main>
-  <h1>Reactive Auto-Editor Console</h1>
-  <p>Desktop-first live engine: Rust clock authority, Theatre authoring, quantized execution.</p>
+  <header class="app-head">
+    <div>
+      <h1>Reactive Auto-Editor Console</h1>
+      <p>Desktop-first live engine: Rust clock authority, Theatre authoring, quantized execution.</p>
+    </div>
+  </header>
 
   <div class="workspace">
     <aside class="sidebar">
@@ -16,49 +20,72 @@
     </aside>
 
     <section class="main-pane">
-      <VideoDeckPanel />
-      <ReactiveStage />
+      <div class="content-grid">
+        <VideoDeckPanel />
+        <ReactiveStage />
+      </div>
     </section>
   </div>
 </main>
 
 <style>
   main {
-    max-width: 1200px;
+    max-width: 1400px;
     margin: 0 auto;
-    padding: 1.25rem;
+    padding: 0.55rem;
+  }
+
+  .app-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.45rem;
   }
 
   h1 {
-    margin: 0 0 0.25rem;
+    margin: 0 0 0.12rem;
+    font-size: 1.8rem;
+    letter-spacing: -0.01em;
   }
 
   p {
-    margin: 0 0 1rem;
-    color: #a1a1aa;
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.8rem;
   }
 
   .workspace {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 1rem;
+    gap: 0.65rem;
   }
 
   .sidebar,
-  .main-pane {
+  .main-pane,
+  .content-grid {
     display: grid;
-    gap: 1rem;
+    gap: 0.65rem;
+  }
+
+  .content-grid {
+    grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.8fr);
   }
 
   @media (min-width: 1024px) {
     .workspace {
-      grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+      grid-template-columns: minmax(230px, 275px) minmax(0, 1fr);
       align-items: start;
     }
 
     .sidebar {
       position: sticky;
-      top: 1rem;
+      top: 0.55rem;
+    }
+  }
+
+  @media (max-width: 1180px) {
+    .content-grid {
+      grid-template-columns: 1fr;
     }
   }
 </style>
