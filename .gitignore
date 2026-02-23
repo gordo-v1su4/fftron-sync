@@ -1,0 +1,9 @@
+node_modules
+.svelte-kit
+build
+dist
+.vite
+.DS_Store
+src-tauri/target
+src-tauri/gen
+*.log
