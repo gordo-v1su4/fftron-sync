@@ -1,0 +1,27 @@
+[package]
+name = "resolume-gen"
+version = "0.1.0"
+description = "Reactive auto-editing engine shell"
+authors = ["resolume-gen"]
+edition = "2021"
+
+[features]
+default = []
+native-ffmpeg = ["dep:ffmpeg-next"]
+
+[lib]
+name = "resolume_gen_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.0" }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tauri = { version = "2.0.0", features = [] }
+ffmpeg-next = { version = "7", optional = true }
+
+[dev-dependencies]
+pretty_assertions = "1"
