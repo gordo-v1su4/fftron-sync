@@ -2,18 +2,23 @@
   import TransportControlPanel from '$lib/engine/TransportControlPanel.svelte';
   import ReactiveStage from '$lib/rendering/ReactiveStage.svelte';
   import TheatreAuthoringPanel from '$lib/timeline-authoring/TheatreAuthoringPanel.svelte';
+  import VideoDeckPanel from '$lib/video/VideoDeckPanel.svelte';
 </script>
 
 <main>
   <h1>Reactive Auto-Editor Console</h1>
   <p>Desktop-first live engine: Rust clock authority, Theatre authoring, quantized execution.</p>
 
-  <div class="grid">
-    <div class="stack">
+  <div class="workspace">
+    <aside class="sidebar">
       <TransportControlPanel />
       <TheatreAuthoringPanel />
-    </div>
-    <ReactiveStage />
+    </aside>
+
+    <section class="main-pane">
+      <VideoDeckPanel />
+      <ReactiveStage />
+    </section>
   </div>
 </main>
 
@@ -33,21 +38,27 @@
     color: #93a6bf;
   }
 
-  .grid {
+  .workspace {
     display: grid;
     grid-template-columns: 1fr;
     gap: 1rem;
   }
 
-  .stack {
+  .sidebar,
+  .main-pane {
     display: grid;
     gap: 1rem;
   }
 
   @media (min-width: 1024px) {
-    .grid {
-      grid-template-columns: minmax(300px, 380px) 1fr;
+    .workspace {
+      grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
       align-items: start;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 1rem;
     }
   }
 </style>
