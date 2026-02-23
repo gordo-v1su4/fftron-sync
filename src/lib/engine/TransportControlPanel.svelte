@@ -185,10 +185,10 @@
 
 <style>
   .panel {
-    border: 1px solid #3b3f4a;
+    border: 1px solid #3f3f46;
     border-radius: 0.75rem;
     padding: 1rem;
-    background: rgba(10, 14, 24, 0.6);
+    background: rgba(10, 10, 11, 0.9);
   }
 
   .line {
@@ -201,34 +201,36 @@
 
   label {
     font-size: 0.85rem;
-    color: #93a6bf;
+    color: #a1a1aa;
   }
 
   input,
   select,
   button {
     border-radius: 0.5rem;
-    border: 1px solid #2b3d57;
-    background: #0c1828;
-    color: #e6edf3;
+    border: 1px solid #3f3f46;
+    background: #18181b;
+    color: #f4f4f5;
     padding: 0.45rem 0.65rem;
     font: inherit;
   }
 
   button {
     cursor: pointer;
-    background: #1f6feb;
-    border-color: #1f6feb;
+    background: #f59e0b;
+    border-color: #f59e0b;
+    color: #1c1917;
+    font-weight: 600;
   }
 
   .meta {
     margin: 0.3rem 0;
-    color: #93a6bf;
+    color: #a1a1aa;
     font-size: 0.88rem;
   }
 
   .status {
     margin-top: 0.6rem;
-    color: #67d4ad;
+    color: #10b981;
   }
 </style>

@@ -35,7 +35,7 @@
 
   p {
     margin: 0 0 1rem;
-    color: #93a6bf;
+    color: #a1a1aa;
   }
 
   .workspace {

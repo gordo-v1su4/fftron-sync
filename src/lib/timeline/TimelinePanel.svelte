@@ -4,6 +4,10 @@
   export let duration = 0;
   export let currentTime = 0;
   export let onSeek: (time: number) => void = () => {};
+  export let autoSwitchEnabled = false;
+  export let quantizeMode: 'beat' | 'bar' = 'beat';
+  export let onToggleAutoSwitch: () => void = () => {};
+  export let onSetQuantizeMode: (mode: 'beat' | 'bar') => void = () => {};
 
   const sections = ['intro', 'verse-a', 'chorus-a', 'bridge', 'outro'];
 
@@ -67,14 +71,22 @@
       </button>
     {/each}
   </div>
+
+  <div class="quantize-row">
+    <button class:active={autoSwitchEnabled} on:click={onToggleAutoSwitch}>
+      {autoSwitchEnabled ? 'Auto On' : 'Auto Off'}
+    </button>
+    <button class:active={quantizeMode === 'beat'} on:click={() => onSetQuantizeMode('beat')}>Beat</button>
+    <button class:active={quantizeMode === 'bar'} on:click={() => onSetQuantizeMode('bar')}>Bar</button>
+  </div>
 </section>
 
 <style>
   .timeline-shell {
-    border: 1px solid #2f425a;
+    border: 1px solid #3f3f46;
     border-radius: 0.7rem;
     padding: 0.75rem;
-    background: rgba(8, 15, 28, 0.85);
+    background: #111113;
   }
 
   .timeline-head {
@@ -91,7 +103,7 @@
 
   .timeline-head p {
     margin: 0;
-    color: #8da2be;
+    color: #a1a1aa;
     font-size: 0.85rem;
   }
 
@@ -99,15 +111,15 @@
     position: relative;
     height: 18px;
     border-radius: 0.45rem;
-    background: #101a2a;
-    border: 1px solid #24344a;
+    background: #18181b;
+    border: 1px solid #3f3f46;
     overflow: hidden;
   }
 
   .progress {
     position: absolute;
     inset: 0 auto 0 0;
-    background: linear-gradient(90deg, #1f6feb, #35c2ff);
+    background: linear-gradient(90deg, #f59e0b, #fbbf24);
     opacity: 0.25;
   }
 
@@ -121,7 +133,7 @@
     top: 0;
     width: 1px;
     height: 100%;
-    background: rgba(193, 211, 235, 0.2);
+    background: rgba(250, 250, 250, 0.18);
   }
 
   .marker {
@@ -129,7 +141,7 @@
     top: 1px;
     width: 2px;
     height: 14px;
-    background: #ffbf47;
+    background: #10b981;
     transform: translateX(-1px);
   }
 
@@ -146,10 +158,10 @@
   }
 
   .section-row button {
-    border: 1px solid #2e4768;
+    border: 1px solid #3f3f46;
     border-radius: 0.45rem;
-    background: #0e1c31;
-    color: #cfe1fb;
+    background: #27272a;
+    color: #f4f4f5;
     padding: 0.3rem 0.52rem;
     font-size: 0.78rem;
     cursor: pointer;
@@ -157,8 +169,33 @@
   }
 
   .section-row button.active {
-    background: #1f6feb;
-    border-color: #1f6feb;
-    color: #fff;
+    background: #f59e0b;
+    border-color: #f59e0b;
+    color: #1c1917;
+    font-weight: 600;
+  }
+
+  .quantize-row {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+
+  .quantize-row button {
+    border: 1px solid #3f3f46;
+    border-radius: 0.4rem;
+    background: #27272a;
+    color: #f4f4f5;
+    padding: 0.28rem 0.5rem;
+    font-size: 0.76rem;
+    cursor: pointer;
+  }
+
+  .quantize-row button.active {
+    background: #10b981;
+    border-color: #10b981;
+    color: #052e22;
+    font-weight: 600;
   }
 </style>

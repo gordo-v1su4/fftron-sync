@@ -5,8 +5,8 @@
     margin: 0;
     min-height: 100%;
     font-family: "Avenir Next", "SF Pro Display", "Segoe UI", sans-serif;
-    color: #e6edf3;
-    background: radial-gradient(circle at 20% 20%, #10273a 0%, #05080f 50%, #04060b 100%);
+    color: #f4f4f5;
+    background: radial-gradient(circle at 20% 20%, #27272a 0%, #09090b 46%, #030303 100%);
   }
 
   :global(*) {

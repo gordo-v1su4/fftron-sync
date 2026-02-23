@@ -62,10 +62,10 @@
 
 <style>
   .panel {
-    border: 1px solid #3b3f4a;
+    border: 1px solid #3f3f46;
     border-radius: 0.75rem;
     padding: 1rem;
-    background: rgba(10, 14, 24, 0.6);
+    background: rgba(10, 10, 11, 0.9);
     backdrop-filter: blur(8px);
   }
 
@@ -76,22 +76,23 @@
   }
 
   button {
-    border: none;
+    border: 1px solid #f59e0b;
     border-radius: 0.5rem;
-    background: #1f6feb;
-    color: white;
+    background: #f59e0b;
+    color: #1c1917;
     padding: 0.6rem 0.8rem;
     font: inherit;
+    font-weight: 600;
     cursor: pointer;
   }
 
   .status {
-    color: #9fb7ff;
+    color: #10b981;
     margin-top: 0.75rem;
   }
 
   .project {
-    color: #67d4ad;
+    color: #fbbf24;
     margin-top: 0;
     margin-bottom: 0.4rem;
   }

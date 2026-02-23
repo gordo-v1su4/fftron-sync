@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import TimelinePanel from '$lib/timeline/TimelinePanel.svelte';
-  import { activeSection } from '$lib/stores/runtime';
+  import { activeSection, tempoState } from '$lib/stores/runtime';
 
   interface VideoClip {
     id: string;
@@ -16,6 +16,11 @@
   let status = 'Drop or upload clips to begin playback.';
   let duration = 0;
   let currentTime = 0;
+  let autoSwitchEnabled = true;
+  let quantizeMode: 'beat' | 'bar' = 'beat';
+  let lastQuantizeSlot = -1;
+  let pendingSeekRatio: number | null = null;
+  let resumeAfterSwitch = false;
 
   const makeId = (): string =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -67,8 +72,54 @@
     player.currentTime = Math.max(0, Math.min(time, duration || time));
   };
 
+  const getSlotDuration = (): number => {
+    const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
+    const beatDuration = 60 / bpm;
+    return quantizeMode === 'bar' ? beatDuration * 4 : beatDuration;
+  };
+
+  const queueQuantizedSwitch = (slotIndex: number) => {
+    if (clips.length < 2 || !selectedClipId) return;
+    const currentIndex = clips.findIndex((clip) => clip.id === selectedClipId);
+    if (currentIndex < 0) return;
+
+    const nextIndex = (currentIndex + 1) % clips.length;
+    pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
+    resumeAfterSwitch = Boolean(player && !player.paused);
+    selectedClipId = clips[nextIndex].id;
+    status = `Quantized ${quantizeMode} switch: ${clips[nextIndex].name} (slot ${slotIndex})`;
+  };
+
+  const maybeQuantizedSwitch = (time: number) => {
+    if (!autoSwitchEnabled || !player || player.paused || clips.length < 2) return;
+    const slotDuration = getSlotDuration();
+    if (!Number.isFinite(slotDuration) || slotDuration <= 0) return;
+
+    const slotIndex = Math.floor(time / slotDuration);
+    if (slotIndex > lastQuantizeSlot) {
+      if (lastQuantizeSlot >= 0) {
+        queueQuantizedSwitch(slotIndex);
+      }
+      lastQuantizeSlot = slotIndex;
+    }
+  };
+
+  const setQuantizeMode = (mode: 'beat' | 'bar') => {
+    quantizeMode = mode;
+    lastQuantizeSlot = -1;
+    status = `Quantized switching set to ${mode}`;
+  };
+
+  const toggleAutoSwitch = () => {
+    autoSwitchEnabled = !autoSwitchEnabled;
+    lastQuantizeSlot = -1;
+    status = autoSwitchEnabled ? `Auto-switch enabled (${quantizeMode})` : 'Auto-switch disabled';
+  };
+
   const play = async () => {
     if (!player) return;
+    const slotDuration = getSlotDuration();
+    lastQuantizeSlot = slotDuration > 0 ? Math.floor(currentTime / slotDuration) : -1;
     await player.play();
     status = `Playing ${selectedClip()?.name ?? 'clip'} in ${$activeSection}`;
   };
@@ -83,6 +134,7 @@
     player.pause();
     player.currentTime = 0;
     currentTime = 0;
+    lastQuantizeSlot = -1;
     status = 'Stopped';
   };
 
@@ -126,9 +178,18 @@
           playsinline
           on:loadedmetadata={() => {
             duration = player?.duration ?? 0;
+            if (player && pendingSeekRatio !== null && duration > 0) {
+              player.currentTime = Math.min(duration * pendingSeekRatio, Math.max(0, duration - 0.05));
+              pendingSeekRatio = null;
+            }
+            if (player && resumeAfterSwitch) {
+              void player.play();
+              resumeAfterSwitch = false;
+            }
           }}
           on:timeupdate={() => {
             currentTime = player?.currentTime ?? 0;
+            maybeQuantizedSwitch(currentTime);
           }}
         >
           <track kind="captions" srclang="en" label="Captions" src="data:text/vtt,WEBVTT" />
@@ -144,7 +205,15 @@
         <span>Section: {$activeSection}</span>
       </div>
 
-      <TimelinePanel {duration} {currentTime} onSeek={seekTo} />
+      <TimelinePanel
+        {duration}
+        {currentTime}
+        onSeek={seekTo}
+        {autoSwitchEnabled}
+        {quantizeMode}
+        onToggleAutoSwitch={toggleAutoSwitch}
+        onSetQuantizeMode={setQuantizeMode}
+      />
       <p class="status">{status}</p>
     </div>
   </div>
@@ -152,10 +221,10 @@
 
 <style>
   .deck-shell {
-    border: 1px solid #3b3f4a;
+    border: 1px solid #3f3f46;
     border-radius: 0.75rem;
     padding: 1rem;
-    background: rgba(10, 14, 24, 0.7);
+    background: rgba(10, 10, 11, 0.9);
   }
 
   .deck-head h2 {
@@ -164,7 +233,7 @@
 
   .deck-head p {
     margin: 0.3rem 0 0.9rem;
-    color: #8fa4c2;
+    color: #a1a1aa;
   }
 
   .deck-grid {
@@ -174,10 +243,10 @@
   }
 
   .clip-bin {
-    border: 1px solid #2d3f58;
+    border: 1px solid #3f3f46;
     border-radius: 0.65rem;
     padding: 0.65rem;
-    background: rgba(8, 16, 29, 0.9);
+    background: #111113;
   }
 
   #video-upload {
@@ -190,7 +259,8 @@
     text-align: center;
     padding: 0.5rem 0.7rem;
     border-radius: 0.55rem;
-    background: #1f6feb;
+    background: #f59e0b;
+    border: 1px solid #f59e0b;
     color: #fff;
     cursor: pointer;
     margin-bottom: 0.7rem;
@@ -204,25 +274,25 @@
   }
 
   .empty {
-    color: #7e93af;
+    color: #a1a1aa;
     margin: 0;
   }
 
   .clip-card {
-    border: 1px solid #2e425d;
+    border: 1px solid #3f3f46;
     border-radius: 0.5rem;
     padding: 0.5rem;
-    background: #0e1a2c;
+    background: #17171a;
   }
 
   .clip-card.active {
-    border-color: #1f6feb;
+    border-color: #f59e0b;
   }
 
   .clip-pick {
     border: none;
     background: transparent;
-    color: #dbe7fb;
+    color: #fafafa;
     text-align: left;
     width: 100%;
     cursor: pointer;
@@ -232,14 +302,14 @@
 
   .clip-card p {
     margin: 0.3rem 0;
-    color: #8ba2c3;
+    color: #a1a1aa;
     font-size: 0.8rem;
   }
 
   .clip-remove {
-    border: 1px solid #3b4f70;
-    background: #14233b;
-    color: #d0dff7;
+    border: 1px solid #3f3f46;
+    background: #27272a;
+    color: #fafafa;
     border-radius: 0.35rem;
     padding: 0.22rem 0.45rem;
     cursor: pointer;
@@ -247,10 +317,10 @@
   }
 
   .player-shell {
-    border: 1px solid #2d3f58;
+    border: 1px solid #3f3f46;
     border-radius: 0.65rem;
     padding: 0.65rem;
-    background: rgba(8, 16, 29, 0.9);
+    background: #111113;
     display: grid;
     gap: 0.65rem;
   }
@@ -260,14 +330,14 @@
     width: 100%;
     height: 330px;
     border-radius: 0.6rem;
-    border: 1px solid #26374d;
-    background: #020710;
+    border: 1px solid #3f3f46;
+    background: #09090b;
   }
 
   .placeholder {
     display: grid;
     place-items: center;
-    color: #86a0c0;
+    color: #a1a1aa;
     text-align: center;
     padding: 1rem;
   }
@@ -281,21 +351,21 @@
 
   .transport-row button {
     border-radius: 0.45rem;
-    border: 1px solid #3a5175;
-    background: #17325a;
-    color: #e6f0ff;
+    border: 1px solid #3f3f46;
+    background: #27272a;
+    color: #f4f4f5;
     padding: 0.35rem 0.6rem;
     cursor: pointer;
   }
 
   .transport-row span {
-    color: #93a8c6;
+    color: #a1a1aa;
     font-size: 0.88rem;
   }
 
   .status {
     margin: 0;
-    color: #67d4ad;
+    color: #10b981;
     font-size: 0.88rem;
   }
 

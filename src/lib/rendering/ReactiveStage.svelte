@@ -27,10 +27,10 @@
 
 <style>
   .stage-shell {
-    border: 1px solid #3b3f4a;
+    border: 1px solid #3f3f46;
     border-radius: 0.75rem;
     padding: 1rem;
-    background: rgba(10, 14, 24, 0.6);
+    background: rgba(10, 10, 11, 0.9);
   }
 
   .canvas-wrap {
@@ -39,6 +39,6 @@
     margin-top: 0.75rem;
     border-radius: 0.6rem;
     overflow: hidden;
-    border: 1px solid #223;
+    border: 1px solid #3f3f46;
   }
 </style>
