@@ -25,62 +25,104 @@
   let selectedGrid: QuantizeGrid = '1/4n';
   let status = 'Idle';
 
+  const getErrorMessage = (error: unknown): string => (error instanceof Error ? error.message : 'unknown error');
+
   const refresh = async () => {
-    runtimeCapabilities.set(await detectRuntimeCapabilities());
-    const tempo = await getTempoState();
-    tempoState.set(tempo);
-    bpmInput = Math.round(tempo.bpm * 100) / 100;
-    scheduledActions.set(await listScheduledActions());
+    try {
+      runtimeCapabilities.set(await detectRuntimeCapabilities());
+      const tempo = await getTempoState();
+      tempoState.set(tempo);
+      bpmInput = Math.round(tempo.bpm * 100) / 100;
+      scheduledActions.set(await listScheduledActions());
+    } catch (error) {
+      status = `Tauri runtime unavailable in browser preview: ${getErrorMessage(error)}`;
+    }
   };
 
   const applyBpm = async () => {
-    tempoState.set(await setBpm(bpmInput));
-    status = `BPM set to ${bpmInput.toFixed(2)}`;
+    try {
+      tempoState.set(await setBpm(bpmInput));
+      status = `BPM set to ${bpmInput.toFixed(2)}`;
+    } catch (error) {
+      status = `Set BPM failed: ${getErrorMessage(error)}`;
+    }
   };
 
   const runTap = async () => {
-    tempoState.set(await tapBpm(Date.now()));
-    status = 'Tap captured';
+    try {
+      tempoState.set(await tapBpm(Date.now()));
+      status = 'Tap captured';
+    } catch (error) {
+      status = `Tap failed: ${getErrorMessage(error)}`;
+    }
   };
 
   const queueMarkers = async () => {
-    const count = await queueSectionMarkers($activeSection);
-    scheduledActions.set(await listScheduledActions());
-    status = `Queued ${count} markers from ${$activeSection}`;
+    try {
+      const count = await queueSectionMarkers($activeSection);
+      scheduledActions.set(await listScheduledActions());
+      status = `Queued ${count} markers from ${$activeSection}`;
+    } catch (error) {
+      status = `Queue section markers failed: ${getErrorMessage(error)}`;
+    }
   };
 
   const switchDecode = async (event: Event) => {
-    const backend = (event.currentTarget as HTMLSelectElement).value as DecodeBackend;
-    runtimeCapabilities.set(await setDecodeBackend(backend));
-    status = `Decode backend set to ${backend}`;
+    try {
+      const backend = (event.currentTarget as HTMLSelectElement).value as DecodeBackend;
+      runtimeCapabilities.set(await setDecodeBackend(backend));
+      status = `Decode backend set to ${backend}`;
+    } catch (error) {
+      status = `Set decode backend failed: ${getErrorMessage(error)}`;
+    }
   };
 
   const switchRenderer = async (event: Event) => {
-    const backend = (event.currentTarget as HTMLSelectElement).value as RendererBackend;
-    runtimeCapabilities.set(await setRendererBackend(backend));
-    status = `Renderer backend set to ${backend}`;
+    try {
+      const backend = (event.currentTarget as HTMLSelectElement).value as RendererBackend;
+      runtimeCapabilities.set(await setRendererBackend(backend));
+      status = `Renderer backend set to ${backend}`;
+    } catch (error) {
+      status = `Set renderer backend failed: ${getErrorMessage(error)}`;
+    }
   };
 
   const nudge = async (delta: number) => {
-    tempoState.set(await nudgeBpm(delta));
-    status = `Nudged BPM by ${delta > 0 ? '+' : ''}${delta}`;
+    try {
+      tempoState.set(await nudgeBpm(delta));
+      status = `Nudged BPM by ${delta > 0 ? '+' : ''}${delta}`;
+    } catch (error) {
+      status = `Nudge failed: ${getErrorMessage(error)}`;
+    }
   };
 
   const flushDue = async () => {
-    const due = await popDueActions(Date.now());
-    scheduledActions.set(await listScheduledActions());
-    status = `Dispatched ${due.length} due actions`;
+    try {
+      const due = await popDueActions(Date.now());
+      scheduledActions.set(await listScheduledActions());
+      status = `Dispatched ${due.length} due actions`;
+    } catch (error) {
+      status = `Pop due actions failed: ${getErrorMessage(error)}`;
+    }
   };
 
   const queuePreview = async () => {
-    await queuePreviewAction('trigger_clip', $activeSection, selectedGrid);
-    scheduledActions.set(await listScheduledActions());
-    status = 'Queued preview trigger';
+    try {
+      await queuePreviewAction('trigger_clip', $activeSection, selectedGrid);
+      scheduledActions.set(await listScheduledActions());
+      status = 'Queued preview trigger';
+    } catch (error) {
+      status = `Queue preview failed: ${getErrorMessage(error)}`;
+    }
   };
 
   const applyGrid = async () => {
-    await setQuantization(selectedGrid);
-    status = `Quantize grid set to ${selectedGrid}`;
+    try {
+      await setQuantization(selectedGrid);
+      status = `Quantize grid set to ${selectedGrid}`;
+    } catch (error) {
+      status = `Set quantization failed: ${getErrorMessage(error)}`;
+    }
   };
 
   onMount(async () => {

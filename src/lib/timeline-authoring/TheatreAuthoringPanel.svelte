@@ -8,29 +8,43 @@
   let theatreProjectId = '';
 
   onMount(() => {
-    const context = ensureTheatreAuthoringContext();
-    theatreProjectId = context.projectId;
-    status = `Theatre authoring context ready (${context.projectId})`;
+    void (async () => {
+      try {
+        const context = await ensureTheatreAuthoringContext();
+        theatreProjectId = context.projectId;
+        status = `Theatre authoring context ready (${context.projectId})`;
+      } catch (error) {
+        status = `Theatre init failed: ${error instanceof Error ? error.message : 'unknown error'}`;
+      }
+    })();
   });
 
   const loadBundle = async () => {
-    const bundle = buildStarterBundle();
-    const isValid = await validateTheatreBundle(bundle);
-    if (!isValid) {
-      status = 'Bundle rejected by Rust validator';
-      return;
-    }
+    try {
+      const bundle = buildStarterBundle();
+      const isValid = await validateTheatreBundle(bundle);
+      if (!isValid) {
+        status = 'Bundle rejected by Rust validator';
+        return;
+      }
 
-    const loaded = await importTheatreBundle(bundle);
-    status = `Imported ${loaded} cue markers`;
-    markers.set(await listTimelineMarkers());
+      const loaded = await importTheatreBundle(bundle);
+      status = `Imported ${loaded} cue markers`;
+      markers.set(await listTimelineMarkers());
+    } catch (error) {
+      status = `Import unavailable in web preview: ${error instanceof Error ? error.message : 'unknown error'}`;
+    }
   };
 
   const setSection = async (section: string) => {
-    const count = await activateTimelineSection(section);
-    activeSection.set(section);
-    markers.set(await listTimelineMarkers(section));
-    status = `Section ${section} active (${count} markers)`;
+    try {
+      const count = await activateTimelineSection(section);
+      activeSection.set(section);
+      markers.set(await listTimelineMarkers(section));
+      status = `Section ${section} active (${count} markers)`;
+    } catch (error) {
+      status = `Section activation unavailable in web preview: ${error instanceof Error ? error.message : 'unknown error'}`;
+    }
   };
 </script>
 

@@ -1,4 +1,3 @@
-import { getProject } from '@theatre/core';
 import type { ISheet } from '@theatre/core';
 import type { TheatreExportBundle } from '$lib/types/timeline';
 
@@ -9,8 +8,16 @@ export interface TheatreAuthoringContext {
 
 let theatreContext: TheatreAuthoringContext | null = null;
 
-export const ensureTheatreAuthoringContext = (): TheatreAuthoringContext => {
+export const ensureTheatreAuthoringContext = async (): Promise<TheatreAuthoringContext> => {
   if (theatreContext) return theatreContext;
+
+  // Dynamic import keeps Theatre out of SSR evaluation.
+  const theatreModule = await import('@theatre/core');
+  const getProject =
+    theatreModule.getProject ?? (theatreModule.default as { getProject?: typeof theatreModule.getProject })?.getProject;
+  if (!getProject) {
+    throw new Error('Theatre getProject is unavailable');
+  }
 
   const projectId = 'fftron-sync-authoring';
   const project = getProject(projectId);
