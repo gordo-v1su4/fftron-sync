@@ -3,6 +3,8 @@ import type { QuantizeGrid } from '$lib/types/timeline';
 export type RendererBackend = 'webgl2' | 'webgpu';
 export type DecodeBackend = 'htmlvideo' | 'webcodecs' | 'native_ffmpeg';
 export type TempoSource = 'manual' | 'tap' | 'link' | 'midi_clock' | 'auto';
+export type AudioInputSource = 'none' | 'file' | 'mic';
+export type ReactiveBandTarget = 'low' | 'mid' | 'high' | 'full';
 
 export interface RuntimeCapabilities {
   webgl2: boolean;
@@ -28,4 +30,30 @@ export interface ScheduledAction {
   section: string | null;
   quantize: QuantizeGrid;
   executeAtMs: number;
+}
+
+export interface AudioBandState {
+  low: number;
+  mid: number;
+  high: number;
+  full: number;
+  envelopeA: number;
+  envelopeB: number;
+  peak: boolean;
+}
+
+export interface ReactiveEnvelopeState {
+  target: ReactiveBandTarget;
+  attackMs: number;
+  releaseMs: number;
+  threshold: number;
+  sensitivity: number;
+}
+
+export interface AudioRuntimeState {
+  source: AudioInputSource;
+  trackName: string;
+  isPlaying: boolean;
+  currentTime: number;
+  duration: number;
 }

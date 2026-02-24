@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AudioReactivePanel from '$lib/audio/AudioReactivePanel.svelte';
   import TransportControlPanel from '$lib/engine/TransportControlPanel.svelte';
   import ReactiveStage from '$lib/rendering/ReactiveStage.svelte';
   import TheatreAuthoringPanel from '$lib/timeline-authoring/TheatreAuthoringPanel.svelte';
@@ -20,6 +21,7 @@
     </aside>
 
     <section class="main-pane">
+      <AudioReactivePanel />
       <div class="content-grid">
         <VideoDeckPanel />
         <ReactiveStage />

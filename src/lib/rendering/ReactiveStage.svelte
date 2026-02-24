@@ -1,25 +1,34 @@
 <script lang="ts">
   import { Canvas } from '@threlte/core';
   import { T } from '@threlte/core';
-  import { activeSection, canUseWebGpu, markers } from '$lib/stores/runtime';
+  import { activeSection, audioBands, canUseWebGpu, markers } from '$lib/stores/runtime';
 
+  let rotation: [number, number, number] = [0.35, 0.5, 0];
   $: markerCount = $markers.length;
+  $: scale = 0.95 + $audioBands.envelopeA * 1.05;
+  $: yBob = ($audioBands.low - 0.45) * 0.65;
+  $: rotation = [
+    0.35 + $audioBands.mid * 0.9,
+    0.5 + $audioBands.high * 1.1,
+    $audioBands.envelopeB * 0.55
+  ] as [number, number, number];
+  $: stageColor = $audioBands.peak ? '#10b981' : '#74a98a';
 </script>
 
 <section class="stage-shell">
   <header>
     <h2>Reactive Stage</h2>
     <p>Backend: {$canUseWebGpu ? 'WebGPU (feature-flag)' : 'WebGL2 (default)'}</p>
-    <p>Section: {$activeSection} • Markers: {markerCount}</p>
+    <p>Section: {$activeSection} • Markers: {markerCount} • EnvA: {$audioBands.envelopeA.toFixed(2)}</p>
   </header>
 
   <div class="canvas-wrap">
     <Canvas>
       <T.PerspectiveCamera makeDefault position={[0, 0, 5]} />
       <T.AmbientLight intensity={0.8} />
-      <T.Mesh rotation={[0.4, 0.6, 0]}>
+      <T.Mesh position={[0, yBob, 0]} rotation={rotation} scale={[scale, scale, scale]}>
         <T.BoxGeometry args={[1.5, 1.5, 1.5]} />
-        <T.MeshStandardMaterial color="#5dd6a2" metalness={0.2} roughness={0.35} />
+        <T.MeshStandardMaterial color={stageColor} metalness={0.2} roughness={0.35} />
       </T.Mesh>
     </Canvas>
   </div>
