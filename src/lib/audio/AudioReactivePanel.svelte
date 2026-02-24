@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { audioBands, audioRuntime, reactiveEnvelope, tempoState } from '$lib/stores/runtime';
+  import { activeSection, audioBands, audioRuntime, markers, reactiveEnvelope, tempoState } from '$lib/stores/runtime';
+  import { analyzeEssentiaRhythm, analyzeEssentiaStructure } from '$lib/services/essentia';
+  import type { EngineCueMarker } from '$lib/types/timeline';
   import type { ReactiveBandTarget } from '$lib/types/engine';
 
   const targets: ReactiveBandTarget[] = ['low', 'mid', 'high', 'full'];
@@ -18,7 +20,10 @@
   let lastFrameMs = 0;
   let fftData: Uint8Array | null = null;
   let loadedTrackUrl = '';
+  let loadedMediaFile: File | null = null;
   let status = 'Load a song (or mic) to drive FFT and envelopes.';
+  let essentiaApiKey = '';
+  let essentiaLoading = false;
 
   let target: ReactiveBandTarget = 'full';
   let attackMs = 27;
@@ -28,6 +33,32 @@
 
   let envelopeA = 0;
   let envelopeB = 0;
+
+  const normalizeSectionLabel = (label: string): string => {
+    const clean = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    return clean.length > 0 ? clean : 'section';
+  };
+
+  const compileSectionMarkers = (sections: Array<{ start: number; label: string }>, bpm: number): EngineCueMarker[] => {
+    const beatsPerSecond = Math.max(20, Math.min(300, bpm)) / 60;
+    return sections.map((section, index) => {
+      const totalBeats = Math.max(0, section.start * beatsPerSecond);
+      const bar = Math.floor(totalBeats / 4) + 1;
+      const beat = (Math.floor(totalBeats) % 4) + 1;
+      return {
+        id: `ess-${index + 1}`,
+        section: normalizeSectionLabel(section.label || `section-${index + 1}`),
+        bar,
+        beat,
+        quantize: '1n',
+        action: 'trigger_clip',
+        payload: {
+          start: section.start,
+          source: 'essentia'
+        }
+      };
+    });
+  };
 
   const applyEnvelopeSettings = () => {
     reactiveEnvelope.set({
@@ -199,6 +230,7 @@
     audioElement.src = loadedTrackUrl;
     audioElement.load();
     await attachFileSource();
+    loadedMediaFile = file;
 
     audioRuntime.set({
       source: 'file',
@@ -261,10 +293,55 @@
     }
   };
 
+  const runEssentiaDetection = async () => {
+    if (!loadedMediaFile) {
+      status = 'Load an audio/video file before Essentia detection.';
+      return;
+    }
+    if (!essentiaApiKey.trim()) {
+      status = 'Add an Essentia API key to run BPM/section detection.';
+      return;
+    }
+
+    essentiaLoading = true;
+    try {
+      const [rhythm, structure] = await Promise.all([
+        analyzeEssentiaRhythm(loadedMediaFile, essentiaApiKey.trim()),
+        analyzeEssentiaStructure(loadedMediaFile, essentiaApiKey.trim())
+      ]);
+
+      const markersFromSections = compileSectionMarkers(structure.sections, rhythm.bpm);
+      markers.set(markersFromSections);
+      if (markersFromSections.length > 0) activeSection.set(markersFromSections[0].section);
+
+      const firstBeatSeconds = rhythm.beats[0] ?? 0;
+      tempoState.update((state) => ({
+        ...state,
+        bpm: rhythm.bpm,
+        confidence: rhythm.confidence,
+        source: 'auto',
+        downbeatEpochMs: Date.now() - firstBeatSeconds * 1000
+      }));
+
+      status = `Essentia detected BPM ${rhythm.bpm.toFixed(2)} (${(rhythm.confidence * 100).toFixed(0)}%) and ${markersFromSections.length} sections`;
+    } catch (error) {
+      status = `Essentia detection failed: ${error instanceof Error ? error.message : 'unknown error'}`;
+    } finally {
+      essentiaLoading = false;
+    }
+  };
+
   onMount(() => {
     applyEnvelopeSettings();
     startFftLoop();
+    if (typeof window !== 'undefined') {
+      essentiaApiKey = window.localStorage.getItem('essentia_api_key') ?? '';
+    }
   });
+
+  $: if (typeof window !== 'undefined') {
+    window.localStorage.setItem('essentia_api_key', essentiaApiKey);
+  }
 
   onDestroy(() => {
     if (rafId) cancelAnimationFrame(rafId);
@@ -289,6 +366,21 @@
         <label for="track-file" class="btn btn-accent">Load Song</label>
         <input id="track-file" bind:this={fileInput} type="file" accept="audio/*,video/*" on:change={loadTrack} />
         <button class="btn" on:click={toggleMic}>{$audioRuntime.source === 'mic' ? 'Mic Off' : 'Mic In'}</button>
+      </div>
+
+      <div class="row row-essentia">
+        <label for="essentia-key">Essentia Key</label>
+        <input
+          id="essentia-key"
+          type="password"
+          bind:value={essentiaApiKey}
+          placeholder="X-API-Key"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button class="btn btn-accent" disabled={essentiaLoading} on:click={runEssentiaDetection}>
+          {essentiaLoading ? 'Detecting…' : 'Detect BPM+Sections'}
+        </button>
       </div>
 
       <div class="track">{ $audioRuntime.trackName }</div>
@@ -470,6 +562,13 @@
     gap: 0.28rem;
   }
 
+  .row-essentia {
+    display: grid;
+    grid-template-columns: auto minmax(120px, 1fr) auto;
+    align-items: center;
+    gap: 0.28rem;
+  }
+
   label {
     color: var(--muted);
     font-size: 0.7rem;
@@ -483,7 +582,8 @@
 
   .btn,
   select,
-  input[type='number'] {
+  input[type='number'],
+  input[type='password'] {
     height: 1.82rem;
     border: 1px solid var(--border);
     border-radius: 0.36rem;
@@ -713,7 +813,8 @@
     }
 
     .row-node,
-    .row-envelope {
+    .row-envelope,
+    .row-essentia {
       grid-template-columns: auto 1fr;
     }
   }
