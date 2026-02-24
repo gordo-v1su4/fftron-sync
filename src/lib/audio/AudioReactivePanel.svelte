@@ -7,6 +7,7 @@
 
   const targets: ReactiveBandTarget[] = ['low', 'mid', 'high', 'full'];
   const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
+  const defaultEssentiaApiKey = (import.meta.env.VITE_ESSENTIA_API_KEY as string | undefined)?.trim() ?? '';
 
   let audioElement: HTMLAudioElement | null = null;
   let fileInput: HTMLInputElement | null = null;
@@ -335,7 +336,8 @@
     applyEnvelopeSettings();
     startFftLoop();
     if (typeof window !== 'undefined') {
-      essentiaApiKey = window.localStorage.getItem('essentia_api_key') ?? '';
+      const storedKey = window.localStorage.getItem('essentia_api_key')?.trim() ?? '';
+      essentiaApiKey = storedKey || defaultEssentiaApiKey;
     }
   });
 
