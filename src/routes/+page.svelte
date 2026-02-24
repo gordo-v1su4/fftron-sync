@@ -2,7 +2,6 @@
   import AudioReactivePanel from '$lib/audio/AudioReactivePanel.svelte';
   import TransportControlPanel from '$lib/engine/TransportControlPanel.svelte';
   import ReactiveStage from '$lib/rendering/ReactiveStage.svelte';
-  import TheatreAuthoringPanel from '$lib/timeline-authoring/TheatreAuthoringPanel.svelte';
   import VideoDeckPanel from '$lib/video/VideoDeckPanel.svelte';
 </script>
 
@@ -10,14 +9,13 @@
   <header class="app-head">
     <div>
       <h1>Reactive Auto-Editor Console</h1>
-      <p>Desktop-first live engine: Rust clock authority, Theatre authoring, quantized execution.</p>
+      <p>Desktop-first live engine: Rust clock authority, Three.js shader stage, quantized execution.</p>
     </div>
   </header>
 
   <div class="workspace">
     <aside class="sidebar">
       <TransportControlPanel />
-      <TheatreAuthoringPanel />
     </aside>
 
     <section class="main-pane">

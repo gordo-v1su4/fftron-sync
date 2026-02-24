@@ -15,10 +15,6 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "@theatre/core": "^0.7.2",
-    "@theatre/studio": "^0.7.2",
-    "@threlte/core": "^8.1.4",
-    "@threlte/extras": "^8.12.0",
     "svelte": "^5.0.0",
     "three": "^0.165.0"
   },

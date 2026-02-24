@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import TimelinePanel from '$lib/timeline/TimelinePanel.svelte';
-  import { activeSection, tempoState } from '$lib/stores/runtime';
+  import { activeSection, audioBands, reactiveEnvelope, tempoState } from '$lib/stores/runtime';
 
   interface VideoClip {
     id: string;
@@ -17,6 +17,7 @@
   let duration = 0;
   let currentTime = 0;
   let autoSwitchEnabled = true;
+  let envelopeGateEnabled = true;
   let quantizeMode: 'beat' | 'bar' = 'beat';
   let lastQuantizeSlot = -1;
   let pendingSeekRatio: number | null = null;
@@ -101,8 +102,11 @@
     if (!autoSwitchEnabled || !player || player.paused || clips.length < 2) return;
     const slotIndex = getTransportSlotIndex();
     if (slotIndex > lastQuantizeSlot) {
-      if (lastQuantizeSlot >= 0) {
+      const gateOpen = !envelopeGateEnabled || $audioBands.envelopeA > $reactiveEnvelope.threshold;
+      if (lastQuantizeSlot >= 0 && gateOpen) {
         queueQuantizedSwitch(slotIndex);
+      } else if (lastQuantizeSlot >= 0 && !gateOpen) {
+        status = `Gate closed at slot ${slotIndex}: EnvA ${$audioBands.envelopeA.toFixed(2)} <= Thr ${$reactiveEnvelope.threshold.toFixed(2)}`;
       }
       lastQuantizeSlot = slotIndex;
     }
@@ -118,6 +122,13 @@
     autoSwitchEnabled = !autoSwitchEnabled;
     lastQuantizeSlot = -1;
     status = autoSwitchEnabled ? `Auto-switch enabled (${quantizeMode})` : 'Auto-switch disabled';
+  };
+
+  const toggleEnvelopeGate = () => {
+    envelopeGateEnabled = !envelopeGateEnabled;
+    status = envelopeGateEnabled
+      ? `Envelope gate enabled (EnvA > ${$reactiveEnvelope.threshold.toFixed(2)})`
+      : 'Envelope gate disabled';
   };
 
   const play = async () => {
@@ -205,7 +216,11 @@
         <button on:click={play}>Play</button>
         <button on:click={pause}>Pause</button>
         <button on:click={stop}>Stop</button>
+        <button class:active={envelopeGateEnabled} on:click={toggleEnvelopeGate}>
+          Gate {envelopeGateEnabled ? 'On' : 'Off'}
+        </button>
         <span>Section: {$activeSection}</span>
+        <span>EnvA {$audioBands.envelopeA.toFixed(2)} / Thr {$reactiveEnvelope.threshold.toFixed(2)}</span>
       </div>
 
       <TimelinePanel
@@ -390,6 +405,11 @@
     font-size: 0.73rem;
     font-weight: 600;
     cursor: pointer;
+  }
+
+  .transport-row button.active {
+    border-color: var(--accent-ok);
+    color: var(--accent-ok);
   }
 
   .transport-row span {

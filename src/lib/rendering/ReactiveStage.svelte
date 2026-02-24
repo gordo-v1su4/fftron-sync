@@ -1,37 +1,136 @@
 <script lang="ts">
-  import { Canvas } from '@threlte/core';
-  import { T } from '@threlte/core';
-  import { activeSection, audioBands, canUseWebGpu, markers } from '$lib/stores/runtime';
+  import { onMount } from 'svelte';
+  import * as THREE from 'three';
+  import { activeSection, audioBands, markers } from '$lib/stores/runtime';
 
-  let rotation: [number, number, number] = [0.35, 0.5, 0];
+  let canvasWrap: HTMLDivElement | null = null;
+  let markerCount = 0;
   $: markerCount = $markers.length;
-  $: scale = 0.95 + $audioBands.envelopeA * 1.05;
-  $: yBob = ($audioBands.low - 0.45) * 0.65;
-  $: rotation = [
-    0.35 + $audioBands.mid * 0.9,
-    0.5 + $audioBands.high * 1.1,
-    $audioBands.envelopeB * 0.55
-  ] as [number, number, number];
-  $: stageColor = $audioBands.peak ? '#10b981' : '#74a98a';
+
+  onMount(() => {
+    if (!canvasWrap) return;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#0b0b0c');
+
+    const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 100);
+    camera.position.set(0, 0, 5.4);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    canvasWrap.appendChild(renderer.domElement);
+
+    const geometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uEnvA: { value: 0 },
+        uEnvB: { value: 0 },
+        uPeak: { value: 0 },
+        uLow: { value: 0 },
+        uHigh: { value: 0 }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        uniform float uTime;
+        uniform float uEnvA;
+        uniform float uEnvB;
+
+        void main() {
+          vUv = uv;
+          vec3 p = position;
+          p += normal * (0.07 * uEnvA + 0.04 * sin(uTime * 1.4 + position.y * 3.2) * uEnvB);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uTime;
+        uniform float uEnvA;
+        uniform float uEnvB;
+        uniform float uPeak;
+        uniform float uLow;
+        uniform float uHigh;
+
+        void main() {
+          vec2 uv = vUv * 2.0 - 1.0;
+          float radial = length(uv);
+          float pulse = 0.5 + 0.5 * sin(uTime * 2.6 + radial * 10.0);
+          float edge = smoothstep(0.96, 0.25, radial);
+
+          vec3 base = mix(vec3(0.24, 0.30, 0.27), vec3(0.95, 0.62, 0.08), uEnvA * 0.75);
+          vec3 reactive = vec3(uLow * 0.34, uEnvB * 0.45, uHigh * 0.52);
+          vec3 color = base + reactive * pulse * edge;
+          color += vec3(0.0, 0.24, 0.13) * uPeak;
+
+          gl_FragColor = vec4(color, 1.0);
+        }
+      `
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+
+    const resize = () => {
+      if (!canvasWrap) return;
+      const width = Math.max(1, canvasWrap.clientWidth);
+      const height = Math.max(1, canvasWrap.clientHeight);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height, false);
+    };
+
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvasWrap);
+
+    const clock = new THREE.Clock();
+    let rafId = 0;
+
+    const loop = () => {
+      rafId = requestAnimationFrame(loop);
+
+      const elapsed = clock.getElapsedTime();
+      const envA = $audioBands.envelopeA;
+      const envB = $audioBands.envelopeB;
+
+      material.uniforms.uTime.value = elapsed;
+      material.uniforms.uEnvA.value = envA;
+      material.uniforms.uEnvB.value = envB;
+      material.uniforms.uPeak.value = $audioBands.peak ? 1 : 0;
+      material.uniforms.uLow.value = $audioBands.low;
+      material.uniforms.uHigh.value = $audioBands.high;
+
+      mesh.position.y = ($audioBands.low - 0.42) * 0.62;
+      mesh.scale.setScalar(0.95 + envA * 1.08);
+      mesh.rotation.x = 0.34 + $audioBands.mid * 0.92;
+      mesh.rotation.y = 0.5 + $audioBands.high * 1.08;
+      mesh.rotation.z = envB * 0.6;
+
+      renderer.render(scene, camera);
+    };
+
+    loop();
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      observer.disconnect();
+      geometry.dispose();
+      material.dispose();
+      renderer.dispose();
+      renderer.domElement.remove();
+    };
+  });
 </script>
 
 <section class="stage-shell">
   <header>
     <h2>Reactive Stage</h2>
-    <p>Backend: {$canUseWebGpu ? 'WebGPU (feature-flag)' : 'WebGL2 (default)'}</p>
+    <p>Backend: Three.js WebGL shader pipeline</p>
     <p>Section: {$activeSection} • Markers: {markerCount} • EnvA: {$audioBands.envelopeA.toFixed(2)}</p>
   </header>
 
-  <div class="canvas-wrap">
-    <Canvas>
-      <T.PerspectiveCamera makeDefault position={[0, 0, 5]} />
-      <T.AmbientLight intensity={0.8} />
-      <T.Mesh position={[0, yBob, 0]} rotation={rotation} scale={[scale, scale, scale]}>
-        <T.BoxGeometry args={[1.5, 1.5, 1.5]} />
-        <T.MeshStandardMaterial color={stageColor} metalness={0.2} roughness={0.35} />
-      </T.Mesh>
-    </Canvas>
-  </div>
+  <div bind:this={canvasWrap} class="canvas-wrap"></div>
 </section>
 
 <style>
