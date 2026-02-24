@@ -544,8 +544,52 @@
   }
 
   input[type='range'] {
+    -webkit-appearance: none;
+    appearance: none;
     width: 100%;
-    accent-color: var(--accent);
+    height: 1rem;
+    background: transparent;
+    margin: 0;
+    padding: 0;
+  }
+
+  input[type='range']::-webkit-slider-runnable-track {
+    height: 0.28rem;
+    border-radius: 0.06rem;
+    background: #e4e4e7;
+    border: 1px solid #3f3f46;
+  }
+
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 0.34rem;
+    height: 1rem;
+    margin-top: -0.4rem;
+    border-radius: 0.06rem;
+    border: 1px solid #1f1f23;
+    background: var(--accent);
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.2);
+  }
+
+  input[type='range']::-moz-range-track {
+    height: 0.28rem;
+    border-radius: 0.06rem;
+    background: #e4e4e7;
+    border: 1px solid #3f3f46;
+  }
+
+  input[type='range']::-moz-range-thumb {
+    width: 0.34rem;
+    height: 1rem;
+    border-radius: 0.06rem;
+    border: 1px solid #1f1f23;
+    background: var(--accent);
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.2);
+  }
+
+  input[type='range']:focus-visible {
+    outline: none;
   }
 
   .envelopes {
