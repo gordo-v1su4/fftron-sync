@@ -22,11 +22,18 @@
   let lastQuantizeSlot = -1;
   let pendingSeekRatio: number | null = null;
   let resumeAfterSwitch = false;
+  const matrixColumns = 14;
 
   const makeId = (): string =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
   const selectedClip = (): VideoClip | undefined => clips.find((clip) => clip.id === selectedClipId);
+  const selectedClipIndex = (): number => clips.findIndex((clip) => clip.id === selectedClipId);
+  const clipAtMatrix = (row: number, col: number): VideoClip | undefined => {
+    if (clips.length === 0) return undefined;
+    const rowOffset = row * matrixColumns;
+    return clips[rowOffset + col];
+  };
 
   const selectClip = (id: string) => {
     selectedClipId = id;
@@ -163,6 +170,34 @@
     <p>Upload clips, assign sections, and run quantized switching on beat or bar.</p>
   </header>
 
+  <div class="matrix-shell">
+    {#each [2, 1, 0] as layer}
+      <div class="matrix-row">
+        <div class="layer-rail">
+          <span>Layer {layer + 1}</span>
+          <button class="mini" on:click={() => status = `Layer ${layer + 1} armed`}>A</button>
+          <button class="mini" on:click={() => status = `Layer ${layer + 1} bypassed`}>B</button>
+        </div>
+        <div class="cells">
+          {#each Array.from({ length: matrixColumns }) as _, col}
+            {@const clip = clipAtMatrix(layer, col)}
+            <button
+              class="cell"
+              class:active={clip && clip.id === selectedClipId}
+              on:click={() => clip && selectClip(clip.id)}
+            >
+              {#if clip}
+                <span>{clip.name.replace(/\.[^/.]+$/, '')}</span>
+              {:else}
+                <span>empty</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/each}
+  </div>
+
   <div class="deck-grid">
     <aside class="clip-bin">
       <label class="upload-btn" for="video-upload">Upload Clips</label>
@@ -220,6 +255,7 @@
           Gate {envelopeGateEnabled ? 'On' : 'Off'}
         </button>
         <span>Section: {$activeSection}</span>
+        <span>Clip {Math.max(1, selectedClipIndex() + 1)}</span>
         <span>EnvA {$audioBands.envelopeA.toFixed(2)} / Thr {$reactiveEnvelope.threshold.toFixed(2)}</span>
       </div>
 
@@ -264,6 +300,92 @@
     display: grid;
     grid-template-columns: 220px minmax(0, 1fr);
     gap: 0.6rem;
+  }
+
+  .matrix-shell {
+    margin-bottom: 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--surface-0);
+    overflow: hidden;
+  }
+
+  .matrix-row {
+    display: grid;
+    grid-template-columns: 94px minmax(0, 1fr);
+    border-top: 1px solid var(--border);
+  }
+
+  .matrix-row:first-child {
+    border-top: none;
+  }
+
+  .layer-rail {
+    border-right: 1px solid var(--border);
+    background: #121213;
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 0.22rem;
+    padding: 0.24rem 0.3rem;
+  }
+
+  .layer-rail span {
+    font-size: 0.64rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .mini {
+    width: 1.2rem;
+    height: 1.2rem;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    border-radius: 0.24rem;
+    font-size: 0.56rem;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .cells {
+    display: grid;
+    grid-template-columns: repeat(14, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--border);
+    padding: 1px;
+  }
+
+  .cell {
+    border: 1px solid #1e1e21;
+    background: #09090a;
+    color: #6f6f75;
+    min-height: 2.2rem;
+    padding: 0.2rem 0.22rem;
+    cursor: pointer;
+    text-align: left;
+    font-size: 0.58rem;
+    line-height: 1.05;
+    font-weight: 600;
+    text-transform: uppercase;
+    overflow: hidden;
+  }
+
+  .cell span {
+    display: -webkit-box;
+    line-clamp: 3;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .cell.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+    color: #f7e8d0;
+    background: linear-gradient(180deg, #1d1610 0%, #0f0f11 100%);
   }
 
   .clip-bin {
@@ -424,6 +546,19 @@
   }
 
   @media (max-width: 1100px) {
+    .matrix-row {
+      grid-template-columns: 1fr;
+    }
+
+    .layer-rail {
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .cells {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+
     .deck-grid {
       grid-template-columns: 1fr;
     }

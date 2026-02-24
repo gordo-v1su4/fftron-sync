@@ -1,4 +1,4 @@
-import { derived, writable } from 'svelte/store';
+import { writable } from 'svelte/store';
 import type {
   AudioBandState,
   AudioRuntimeState,
@@ -57,5 +57,3 @@ export const audioBands = writable<AudioBandState>({
   envelopeB: 0,
   peak: false
 });
-
-export const canUseWebGpu = derived(runtimeCapabilities, ($caps) => $caps.webgpu && $caps.selectedRenderer === 'webgpu');

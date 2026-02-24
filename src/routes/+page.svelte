@@ -1,7 +1,6 @@
 <script lang="ts">
   import AudioReactivePanel from '$lib/audio/AudioReactivePanel.svelte';
   import TransportControlPanel from '$lib/engine/TransportControlPanel.svelte';
-  import ReactiveStage from '$lib/rendering/ReactiveStage.svelte';
   import VideoDeckPanel from '$lib/video/VideoDeckPanel.svelte';
 </script>
 
@@ -20,10 +19,7 @@
 
     <section class="main-pane">
       <AudioReactivePanel />
-      <div class="content-grid">
-        <VideoDeckPanel />
-        <ReactiveStage />
-      </div>
+      <VideoDeckPanel />
     </section>
   </div>
 </main>
@@ -61,14 +57,9 @@
   }
 
   .sidebar,
-  .main-pane,
-  .content-grid {
+  .main-pane {
     display: grid;
     gap: 0.65rem;
-  }
-
-  .content-grid {
-    grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.8fr);
   }
 
   @media (min-width: 1024px) {
@@ -83,9 +74,4 @@
     }
   }
 
-  @media (max-width: 1180px) {
-    .content-grid {
-      grid-template-columns: 1fr;
-    }
-  }
 </style>

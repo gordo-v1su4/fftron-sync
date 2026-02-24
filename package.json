@@ -15,8 +15,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "svelte": "^5.0.0",
-    "three": "^0.165.0"
+    "svelte": "^5.0.0"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",
