@@ -8,6 +8,8 @@
     name: string;
     url: string;
     sizeMb: string;
+    lane: number;
+    slot: number;
   }
 
   let clips: VideoClip[] = [];
@@ -23,16 +25,39 @@
   let pendingSeekRatio: number | null = null;
   let resumeAfterSwitch = false;
   const matrixColumns = 14;
+  let uploadLane = 0;
+  let laneMuted = [false, false, false];
+  let soloLane: number | null = null;
 
   const makeId = (): string =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
   const selectedClip = (): VideoClip | undefined => clips.find((clip) => clip.id === selectedClipId);
   const selectedClipIndex = (): number => clips.findIndex((clip) => clip.id === selectedClipId);
+  const laneIsActive = (lane: number): boolean => (soloLane === null ? !laneMuted[lane] : soloLane === lane);
+  const playableClips = (): VideoClip[] =>
+    clips
+      .filter((clip) => laneIsActive(clip.lane))
+      .sort((a, b) => (a.lane === b.lane ? a.slot - b.slot : a.lane - b.lane));
+
+  const ensurePlayableSelection = () => {
+    const playable = playableClips();
+    if (playable.length === 0) {
+      selectedClipId = '';
+      duration = 0;
+      currentTime = 0;
+      return;
+    }
+    if (!playable.some((clip) => clip.id === selectedClipId)) {
+      selectedClipId = playable[0].id;
+      duration = 0;
+      currentTime = 0;
+    }
+  };
+
   const clipAtMatrix = (row: number, col: number): VideoClip | undefined => {
     if (clips.length === 0) return undefined;
-    const rowOffset = row * matrixColumns;
-    return clips[rowOffset + col];
+    return clips.find((clip) => clip.lane === row && clip.slot === col);
   };
 
   const selectClip = (id: string) => {
@@ -52,27 +77,40 @@
       return;
     }
 
-    const added = files.map((file) => ({
+    const availableSlots = Array.from({ length: matrixColumns }, (_, slot) => slot).filter(
+      (slot) => !clips.some((clip) => clip.lane === uploadLane && clip.slot === slot)
+    );
+
+    if (availableSlots.length === 0) {
+      status = `Layer ${uploadLane + 1} is full. Remove clips or upload to another layer.`;
+      return;
+    }
+
+    const acceptedFiles = files.slice(0, availableSlots.length);
+    const droppedCount = files.length - acceptedFiles.length;
+    const added = acceptedFiles.map((file, index) => ({
       id: makeId(),
       name: file.name,
       url: URL.createObjectURL(file),
-      sizeMb: (file.size / (1024 * 1024)).toFixed(1)
+      sizeMb: (file.size / (1024 * 1024)).toFixed(1),
+      lane: uploadLane,
+      slot: availableSlots[index]
     }));
 
-    clips = [...clips, ...added];
+    clips = [...clips, ...added].sort((a, b) => (a.lane === b.lane ? a.slot - b.slot : a.lane - b.lane));
+    ensurePlayableSelection();
     if (!selectedClipId) selectedClipId = added[0].id;
-    status = `Loaded ${added.length} clip${added.length > 1 ? 's' : ''}`;
+    status = droppedCount
+      ? `Loaded ${added.length} clip(s) to layer ${uploadLane + 1}. ${droppedCount} clip(s) skipped (layer full).`
+      : `Loaded ${added.length} clip${added.length > 1 ? 's' : ''} to layer ${uploadLane + 1}`;
   };
 
   const removeClip = (id: string) => {
     const clip = clips.find((entry) => entry.id === id);
     if (clip) URL.revokeObjectURL(clip.url);
     clips = clips.filter((entry) => entry.id !== id);
-    if (selectedClipId === id) {
-      selectedClipId = clips[0]?.id ?? '';
-      duration = 0;
-      currentTime = 0;
-    }
+    ensurePlayableSelection();
+    if (selectedClipId === id) status = 'Selected clip removed. Switched to next active clip.';
   };
 
   const seekTo = (time: number) => {
@@ -94,19 +132,23 @@
   };
 
   const queueQuantizedSwitch = (slotIndex: number) => {
-    if (clips.length < 2 || !selectedClipId) return;
-    const currentIndex = clips.findIndex((clip) => clip.id === selectedClipId);
-    if (currentIndex < 0) return;
+    const playable = playableClips();
+    if (playable.length < 2 || !selectedClipId) return;
+    const currentIndex = playable.findIndex((clip) => clip.id === selectedClipId);
+    if (currentIndex < 0) {
+      selectedClipId = playable[0].id;
+      return;
+    }
 
     const nextIndex = (currentIndex + 1) % clips.length;
     pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
     resumeAfterSwitch = Boolean(player && !player.paused);
-    selectedClipId = clips[nextIndex].id;
-    status = `Quantized ${quantizeMode} switch: ${clips[nextIndex].name} (slot ${slotIndex})`;
+    selectedClipId = playable[nextIndex].id;
+    status = `Quantized ${quantizeMode} switch: ${playable[nextIndex].name} (slot ${slotIndex})`;
   };
 
   const maybeQuantizedSwitch = () => {
-    if (!autoSwitchEnabled || !player || player.paused || clips.length < 2) return;
+    if (!autoSwitchEnabled || !player || player.paused || playableClips().length < 2) return;
     const slotIndex = getTransportSlotIndex();
     if (slotIndex > lastQuantizeSlot) {
       const gateOpen = !envelopeGateEnabled || $audioBands.envelopeA > $reactiveEnvelope.threshold;
@@ -140,6 +182,11 @@
 
   const play = async () => {
     if (!player) return;
+    ensurePlayableSelection();
+    if (!selectedClipId) {
+      status = 'No active clip available (check lane mute/solo).';
+      return;
+    }
     lastQuantizeSlot = getTransportSlotIndex();
     await player.play();
     status = `Playing ${selectedClip()?.name ?? 'clip'} in ${$activeSection}`;
@@ -159,6 +206,19 @@
     status = 'Stopped';
   };
 
+  const toggleMuteLane = (lane: number) => {
+    laneMuted = laneMuted.map((entry, index) => (index === lane ? !entry : entry));
+    if (laneMuted[lane] && soloLane === lane) soloLane = null;
+    ensurePlayableSelection();
+    status = laneMuted[lane] ? `Layer ${lane + 1} muted` : `Layer ${lane + 1} unmuted`;
+  };
+
+  const toggleSoloLane = (lane: number) => {
+    soloLane = soloLane === lane ? null : lane;
+    ensurePlayableSelection();
+    status = soloLane === null ? 'Solo disabled' : `Solo layer ${lane + 1}`;
+  };
+
   onDestroy(() => {
     for (const clip of clips) URL.revokeObjectURL(clip.url);
   });
@@ -175,8 +235,8 @@
       <div class="matrix-row">
         <div class="layer-rail">
           <span>Layer {layer + 1}</span>
-          <button class="mini" on:click={() => status = `Layer ${layer + 1} armed`}>A</button>
-          <button class="mini" on:click={() => status = `Layer ${layer + 1} bypassed`}>B</button>
+          <button class="mini" class:active={laneMuted[layer]} on:click={() => toggleMuteLane(layer)}>M</button>
+          <button class="mini" class:active={soloLane === layer} on:click={() => toggleSoloLane(layer)}>S</button>
         </div>
         <div class="cells">
           {#each Array.from({ length: matrixColumns }) as _, col}
@@ -200,6 +260,14 @@
 
   <div class="deck-grid">
     <aside class="clip-bin">
+      <div class="upload-row">
+        <label for="upload-lane">To Layer</label>
+        <select id="upload-lane" bind:value={uploadLane}>
+          <option value={0}>Layer 1</option>
+          <option value={1}>Layer 2</option>
+          <option value={2}>Layer 3</option>
+        </select>
+      </div>
       <label class="upload-btn" for="video-upload">Upload Clips</label>
       <input id="video-upload" type="file" accept="video/*" multiple on:change={uploadClips} />
 
@@ -225,6 +293,7 @@
           src={selectedClip()?.url}
           controls
           playsinline
+          loop
           on:loadedmetadata={() => {
             duration = player?.duration ?? 0;
             if (player && pendingSeekRatio !== null && duration > 0) {
@@ -350,6 +419,11 @@
     padding: 0;
   }
 
+  .mini.active {
+    border-color: var(--accent-ok);
+    color: var(--accent-ok);
+  }
+
   .cells {
     display: grid;
     grid-template-columns: repeat(14, minmax(0, 1fr));
@@ -397,6 +471,30 @@
 
   #video-upload {
     display: none;
+  }
+
+  .upload-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.3rem;
+    align-items: center;
+    margin-bottom: 0.34rem;
+  }
+
+  .upload-row label {
+    font-size: 0.67rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  .upload-row select {
+    height: 1.55rem;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    border-radius: 0.3rem;
+    font-size: 0.7rem;
   }
 
   .upload-btn {
