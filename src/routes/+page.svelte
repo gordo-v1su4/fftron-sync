@@ -8,7 +8,7 @@
   <header class="app-head">
     <div>
       <h1>Reactive Auto-Editor Console</h1>
-      <p>Desktop-first live engine: Rust clock authority, Three.js shader stage, quantized execution.</p>
+      <p>Desktop-first live engine: Rust clock authority, reactive clip matrix, quantized execution.</p>
     </div>
   </header>
 

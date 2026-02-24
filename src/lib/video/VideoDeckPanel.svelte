@@ -140,7 +140,7 @@
       return;
     }
 
-    const nextIndex = (currentIndex + 1) % clips.length;
+    const nextIndex = (currentIndex + 1) % playable.length;
     pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
     resumeAfterSwitch = Boolean(player && !player.paused);
     selectedClipId = playable[nextIndex].id;
@@ -278,7 +278,7 @@
           {#each clips as clip}
             <div class:active={clip.id === selectedClipId} class="clip-card">
               <button class="clip-pick" on:click={() => selectClip(clip.id)}>{clip.name}</button>
-              <p>{clip.sizeMb} MB</p>
+              <p>L{clip.lane + 1} · C{clip.slot + 1} · {clip.sizeMb} MB</p>
               <button class="clip-remove" on:click={() => removeClip(clip.id)}>Remove</button>
             </div>
           {/each}

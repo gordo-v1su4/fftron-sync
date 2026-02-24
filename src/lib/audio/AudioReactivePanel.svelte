@@ -280,7 +280,7 @@
 <section class="panel">
   <header class="head">
     <h2>Audio Reactive</h2>
-    <p>Song or live input drives FFT + dual envelopes for visuals and clip policy.</p>
+    <p>Song or live input drives FFT + dual envelopes for clip policy and timing gates.</p>
   </header>
 
   <div class="layout">
@@ -368,19 +368,22 @@
           <div class="meter"><div style={`width:${$audioBands.envelopeB * 100}%`}></div></div>
         </div>
       </div>
+      <p class="explain">
+        Sensitivity scales the selected Node band before envelope smoothing. Attack controls rise time, Release controls decay time.
+      </p>
     </div>
 
     <aside class="states">
-      <h3>States</h3>
-      <p class="legend"><span class="dash"></span>Selected</p>
-      <p class="legend"><span class="block"></span>Pressed</p>
+      <h3>Signal Gate</h3>
+      <p class="legend"><span class="dash"></span>Threshold</p>
+      <p class="legend"><span class="block"></span>Peak armed</p>
       <div class="bands">
         <div><span>L</span><div class="meter"><div style={`width:${$audioBands.low * 100}%`}></div></div></div>
         <div><span>M</span><div class="meter"><div style={`width:${$audioBands.mid * 100}%`}></div></div></div>
         <div><span>H</span><div class="meter"><div style={`width:${$audioBands.high * 100}%`}></div></div></div>
         <div><span>F</span><div class="meter"><div style={`width:${$audioBands.full * 100}%`}></div></div></div>
       </div>
-      <div class:live={$audioBands.peak} class="peak-light">P1</div>
+      <div class:live={$audioBands.peak} class="peak-light">{$audioBands.peak ? 'Peak On' : 'Peak Off'}</div>
     </aside>
   </div>
 
@@ -550,6 +553,13 @@
     gap: 0.24rem;
   }
 
+  .explain {
+    margin: 0.16rem 0 0;
+    color: var(--muted);
+    font-size: 0.67rem;
+    line-height: 1.25;
+  }
+
   .env-item {
     display: grid;
     grid-template-columns: 75px 1fr;
@@ -633,7 +643,7 @@
     display: grid;
     place-items: center;
     color: var(--text);
-    font-size: 1.9rem;
+    font-size: 1rem;
     font-weight: 700;
   }
 
