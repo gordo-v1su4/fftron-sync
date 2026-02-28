@@ -1,7 +1,20 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
-  import TimelinePanel from '$lib/timeline/TimelinePanel.svelte';
-  import { activeSection, audioBands, reactiveEnvelope, tempoState } from '$lib/stores/runtime';
+  import { onDestroy } from "svelte";
+  import {
+    activeSection,
+    audioBands,
+    reactiveEnvelope,
+    tempoState,
+  } from "$lib/stores/runtime";
+
+  export let duration = 0;
+  export let currentTime = 0;
+  export let autoSwitchEnabled = true;
+  export let quantizeMode: "beat" | "bar" = "beat";
+  export let seekTo: (time: number) => void = (t) => {
+    if (!player || !Number.isFinite(t)) return;
+    player.currentTime = Math.max(0, Math.min(t, duration || t));
+  };
 
   interface VideoClip {
     id: string;
@@ -13,14 +26,10 @@
   }
 
   let clips: VideoClip[] = [];
-  let selectedClipId = '';
+  let selectedClipId = "";
   let player: HTMLVideoElement | null = null;
-  let status = 'Drop or upload clips to begin playback.';
-  let duration = 0;
-  let currentTime = 0;
-  let autoSwitchEnabled = true;
+  let status = "Drop or upload clips to begin playback.";
   let envelopeGateEnabled = true;
-  let quantizeMode: 'beat' | 'bar' = 'beat';
   let lastQuantizeSlot = -1;
   let pendingSeekRatio: number | null = null;
   let resumeAfterSwitch = false;
@@ -32,9 +41,12 @@
   const makeId = (): string =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-  const selectedClip = (): VideoClip | undefined => clips.find((clip) => clip.id === selectedClipId);
-  const selectedClipIndex = (): number => clips.findIndex((clip) => clip.id === selectedClipId);
-  const laneIsActive = (lane: number): boolean => (soloLane === null ? !laneMuted[lane] : soloLane === lane);
+  const selectedClip = (): VideoClip | undefined =>
+    clips.find((clip) => clip.id === selectedClipId);
+  const selectedClipIndex = (): number =>
+    clips.findIndex((clip) => clip.id === selectedClipId);
+  const laneIsActive = (lane: number): boolean =>
+    soloLane === null ? !laneMuted[lane] : soloLane === lane;
   const playableClips = (): VideoClip[] =>
     clips
       .filter((clip) => laneIsActive(clip.lane))
@@ -43,7 +55,7 @@
   const ensurePlayableSelection = () => {
     const playable = playableClips();
     if (playable.length === 0) {
-      selectedClipId = '';
+      selectedClipId = "";
       duration = 0;
       currentTime = 0;
       return;
@@ -64,21 +76,25 @@
     selectedClipId = id;
     duration = 0;
     currentTime = 0;
-    status = `Selected ${clips.find((clip) => clip.id === id)?.name ?? 'clip'}`;
+    status = `Selected ${clips.find((clip) => clip.id === id)?.name ?? "clip"}`;
   };
 
   const uploadClips = (event: Event) => {
-    const files = Array.from((event.currentTarget as HTMLInputElement).files ?? []).filter((file) =>
-      file.type.startsWith('video/')
-    );
+    const files = Array.from(
+      (event.currentTarget as HTMLInputElement).files ?? [],
+    ).filter((file) => file.type.startsWith("video/"));
 
     if (!files.length) {
-      status = 'No video files detected in selection.';
+      status = "No video files detected in selection.";
       return;
     }
 
-    const availableSlots = Array.from({ length: matrixColumns }, (_, slot) => slot).filter(
-      (slot) => !clips.some((clip) => clip.lane === uploadLane && clip.slot === slot)
+    const availableSlots = Array.from(
+      { length: matrixColumns },
+      (_, slot) => slot,
+    ).filter(
+      (slot) =>
+        !clips.some((clip) => clip.lane === uploadLane && clip.slot === slot),
     );
 
     if (availableSlots.length === 0) {
@@ -94,15 +110,17 @@
       url: URL.createObjectURL(file),
       sizeMb: (file.size / (1024 * 1024)).toFixed(1),
       lane: uploadLane,
-      slot: availableSlots[index]
+      slot: availableSlots[index],
     }));
 
-    clips = [...clips, ...added].sort((a, b) => (a.lane === b.lane ? a.slot - b.slot : a.lane - b.lane));
+    clips = [...clips, ...added].sort((a, b) =>
+      a.lane === b.lane ? a.slot - b.slot : a.lane - b.lane,
+    );
     ensurePlayableSelection();
     if (!selectedClipId) selectedClipId = added[0].id;
     status = droppedCount
-      ? `Loaded ${added.length} clip(s) to layer ${uploadLane + 1}. ${droppedCount} clip(s) skipped (layer full).`
-      : `Loaded ${added.length} clip${added.length > 1 ? 's' : ''} to layer ${uploadLane + 1}`;
+      ? `Loaded ${added.length} clip(s) to layer ${uploadLane + 1}. ${droppedCount} clip(s) skipped.`
+      : `Loaded ${added.length} clip${added.length > 1 ? "s" : ""} to layer ${uploadLane + 1}`;
   };
 
   const removeClip = (id: string) => {
@@ -110,31 +128,32 @@
     if (clip) URL.revokeObjectURL(clip.url);
     clips = clips.filter((entry) => entry.id !== id);
     ensurePlayableSelection();
-    if (selectedClipId === id) status = 'Selected clip removed. Switched to next active clip.';
-  };
-
-  const seekTo = (time: number) => {
-    if (!player || !Number.isFinite(time)) return;
-    player.currentTime = Math.max(0, Math.min(time, duration || time));
+    if (selectedClipId === id)
+      status = "Selected clip removed. Switched to next active clip.";
   };
 
   const getSlotDuration = (): number => {
     const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
     const beatDuration = 60 / bpm;
-    return quantizeMode === 'bar' ? beatDuration * 4 : beatDuration;
+    return quantizeMode === "bar" ? beatDuration * 4 : beatDuration;
   };
 
   const getTransportSlotIndex = (): number => {
     const slotDuration = getSlotDuration();
     if (!Number.isFinite(slotDuration) || slotDuration <= 0) return -1;
-    const elapsedSeconds = Math.max(0, (Date.now() - $tempoState.downbeatEpochMs) / 1000);
+    const elapsedSeconds = Math.max(
+      0,
+      (Date.now() - $tempoState.downbeatEpochMs) / 1000,
+    );
     return Math.floor(elapsedSeconds / slotDuration);
   };
 
   const queueQuantizedSwitch = (slotIndex: number) => {
     const playable = playableClips();
     if (playable.length < 2 || !selectedClipId) return;
-    const currentIndex = playable.findIndex((clip) => clip.id === selectedClipId);
+    const currentIndex = playable.findIndex(
+      (clip) => clip.id === selectedClipId,
+    );
     if (currentIndex < 0) {
       selectedClipId = playable[0].id;
       return;
@@ -148,53 +167,46 @@
   };
 
   const maybeQuantizedSwitch = () => {
-    if (!autoSwitchEnabled || !player || player.paused || playableClips().length < 2) return;
+    if (
+      !autoSwitchEnabled ||
+      !player ||
+      player.paused ||
+      playableClips().length < 2
+    )
+      return;
     const slotIndex = getTransportSlotIndex();
     if (slotIndex > lastQuantizeSlot) {
-      const gateOpen = !envelopeGateEnabled || $audioBands.envelopeA > $reactiveEnvelope.threshold;
+      const gateOpen =
+        !envelopeGateEnabled ||
+        $audioBands.envelopeA > $reactiveEnvelope.threshold;
       if (lastQuantizeSlot >= 0 && gateOpen) {
         queueQuantizedSwitch(slotIndex);
       } else if (lastQuantizeSlot >= 0 && !gateOpen) {
-        status = `Gate closed at slot ${slotIndex}: EnvA ${$audioBands.envelopeA.toFixed(2)} <= Thr ${$reactiveEnvelope.threshold.toFixed(2)}`;
+        status = `Gate closed: EnvA <= Thr`;
       }
       lastQuantizeSlot = slotIndex;
     }
   };
 
-  const setQuantizeMode = (mode: 'beat' | 'bar') => {
-    quantizeMode = mode;
-    lastQuantizeSlot = -1;
-    status = `Quantized switching set to ${mode}`;
-  };
-
-  const toggleAutoSwitch = () => {
-    autoSwitchEnabled = !autoSwitchEnabled;
-    lastQuantizeSlot = -1;
-    status = autoSwitchEnabled ? `Auto-switch enabled (${quantizeMode})` : 'Auto-switch disabled';
-  };
-
   const toggleEnvelopeGate = () => {
     envelopeGateEnabled = !envelopeGateEnabled;
-    status = envelopeGateEnabled
-      ? `Envelope gate enabled (EnvA > ${$reactiveEnvelope.threshold.toFixed(2)})`
-      : 'Envelope gate disabled';
   };
 
   const play = async () => {
     if (!player) return;
     ensurePlayableSelection();
     if (!selectedClipId) {
-      status = 'No active clip available (check lane mute/solo).';
+      status = "No active clip available.";
       return;
     }
     lastQuantizeSlot = getTransportSlotIndex();
     await player.play();
-    status = `Playing ${selectedClip()?.name ?? 'clip'} in ${$activeSection}`;
+    status = `Playing ${selectedClip()?.name ?? "clip"}`;
   };
 
   const pause = () => {
     player?.pause();
-    status = 'Paused';
+    status = "Paused";
   };
 
   const stop = () => {
@@ -203,20 +215,20 @@
     player.currentTime = 0;
     currentTime = 0;
     lastQuantizeSlot = -1;
-    status = 'Stopped';
+    status = "Stopped";
   };
 
   const toggleMuteLane = (lane: number) => {
-    laneMuted = laneMuted.map((entry, index) => (index === lane ? !entry : entry));
+    laneMuted = laneMuted.map((entry, index) =>
+      index === lane ? !entry : entry,
+    );
     if (laneMuted[lane] && soloLane === lane) soloLane = null;
     ensurePlayableSelection();
-    status = laneMuted[lane] ? `Layer ${lane + 1} muted` : `Layer ${lane + 1} unmuted`;
   };
 
   const toggleSoloLane = (lane: number) => {
     soloLane = soloLane === lane ? null : lane;
     ensurePlayableSelection();
-    status = soloLane === null ? 'Solo disabled' : `Solo layer ${lane + 1}`;
   };
 
   onDestroy(() => {
@@ -224,32 +236,77 @@
   });
 </script>
 
-<section class="deck-shell">
-  <header class="deck-head">
-    <h2>Video Deck</h2>
-    <p>Upload clips, assign sections, and run quantized switching on beat or bar.</p>
-  </header>
+<div
+  class="h-full flex flex-col gap-1 bg-surface-900 border border-surface-800 rounded-md p-1"
+>
+  <div
+    class="flex-none flex items-center justify-between border-b border-surface-800 pb-1 mb-1"
+  >
+    <h2
+      class="text-[0.65rem] font-bold uppercase tracking-widest text-surface-400 m-0"
+    >
+      Video Matrix
+    </h2>
+    <p class="text-[0.6rem] m-0 truncate text-primary-500">{status}</p>
+  </div>
 
-  <div class="matrix-shell">
+  <div
+    class="flex-none flex flex-col gap-[1px] bg-surface-800 border border-surface-800 rounded-sm overflow-hidden text-[0.6rem]"
+  >
     {#each [2, 1, 0] as layer}
-      <div class="matrix-row">
-        <div class="layer-rail">
-          <span>Layer {layer + 1}</span>
-          <button class="mini" class:active={laneMuted[layer]} on:click={() => toggleMuteLane(layer)}>M</button>
-          <button class="mini" class:active={soloLane === layer} on:click={() => toggleSoloLane(layer)}>S</button>
+      <div class="flex items-stretch bg-surface-950">
+        <div
+          class="w-16 flex flex-col items-center justify-center gap-1 bg-surface-900 p-1 border-r border-surface-800"
+        >
+          <span class="text-[0.55rem] text-surface-400 font-bold uppercase"
+            >L{layer + 1}</span
+          >
+          <div class="flex gap-1 w-10">
+            <button
+              class="w-5 h-5 rounded-sm flex items-center justify-center font-bold text-[0.55rem] bg-surface-800 {laneMuted[
+                layer
+              ]
+                ? 'text-error-500 border border-error-500'
+                : 'text-surface-400 border border-surface-700'}"
+              on:click={() => toggleMuteLane(layer)}>M</button
+            >
+            <button
+              class="w-5 h-5 rounded-sm flex items-center justify-center font-bold text-[0.55rem] bg-surface-800 {soloLane ===
+              layer
+                ? 'text-primary-500 border border-primary-500'
+                : 'text-surface-400 border border-surface-700'}"
+              on:click={() => toggleSoloLane(layer)}>S</button
+            >
+          </div>
         </div>
-        <div class="cells">
+        <div class="flex-1 grid grid-cols-14 gap-[1px] bg-surface-800 p-[1px]">
           {#each Array.from({ length: matrixColumns }) as _, col}
             {@const clip = clipAtMatrix(layer, col)}
             <button
-              class="cell"
-              class:active={clip && clip.id === selectedClipId}
+              class="relative h-14 flex flex-col overflow-hidden bg-surface-950 text-surface-500 hover:bg-surface-800 border transition-colors {clip &&
+              clip.id === selectedClipId
+                ? 'border-primary-500 shadow-[inset_0_0_12px_rgba(245,158,11,0.25)]'
+                : 'border-transparent'}"
               on:click={() => clip && selectClip(clip.id)}
             >
               {#if clip}
-                <span>{clip.name.replace(/\.[^/.]+$/, '')}</span>
+                <video
+                  src={clip.url}
+                  class="absolute inset-0 w-full h-full object-cover opacity-60 mix-blend-screen"
+                  muted
+                  disablePictureInPicture
+                  preload="metadata"
+                ></video>
+                <div
+                  class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-surface-950 to-transparent p-0.5 z-10 text-left"
+                >
+                  <span
+                    class="text-[0.55rem] tracking-tighter font-mono uppercase text-surface-200 block truncate drop-shadow-md"
+                    >{clip.name.replace(/\.[^/.]+$/, "")}</span
+                  >
+                </div>
               {:else}
-                <span>empty</span>
+                <span class="m-auto text-[0.5rem] text-surface-700">·</span>
               {/if}
             </button>
           {/each}
@@ -258,412 +315,154 @@
     {/each}
   </div>
 
-  <div class="deck-grid">
-    <aside class="clip-bin">
-      <div class="upload-row">
-        <label for="upload-lane">To Layer</label>
-        <select id="upload-lane" bind:value={uploadLane}>
-          <option value={0}>Layer 1</option>
-          <option value={1}>Layer 2</option>
-          <option value={2}>Layer 3</option>
-        </select>
-      </div>
-      <label class="upload-btn" for="video-upload">Upload Clips</label>
-      <input id="video-upload" type="file" accept="video/*" multiple on:change={uploadClips} />
-
-      <div class="clip-list">
-        {#if clips.length === 0}
-          <p class="empty">No clips loaded</p>
-        {:else}
-          {#each clips as clip}
-            <div class:active={clip.id === selectedClipId} class="clip-card">
-              <button class="clip-pick" on:click={() => selectClip(clip.id)}>{clip.name}</button>
-              <p>L{clip.lane + 1} · C{clip.slot + 1} · {clip.sizeMb} MB</p>
-              <button class="clip-remove" on:click={() => removeClip(clip.id)}>Remove</button>
-            </div>
-          {/each}
-        {/if}
-      </div>
-    </aside>
-
-    <div class="player-shell">
-      {#if selectedClip()}
-        <video
-          bind:this={player}
-          src={selectedClip()?.url}
-          controls
-          playsinline
-          loop
-          on:loadedmetadata={() => {
-            duration = player?.duration ?? 0;
-            if (player && pendingSeekRatio !== null && duration > 0) {
-              player.currentTime = Math.min(duration * pendingSeekRatio, Math.max(0, duration - 0.05));
-              pendingSeekRatio = null;
-            }
-            if (player && resumeAfterSwitch) {
-              void player.play();
-              resumeAfterSwitch = false;
-            }
-          }}
-          on:timeupdate={() => {
-            currentTime = player?.currentTime ?? 0;
-            maybeQuantizedSwitch();
-          }}
+  <div class="flex flex-row gap-1 flex-1 min-h-0">
+    <div
+      class="w-40 flex-none flex flex-col gap-1 border border-surface-800 bg-surface-950 rounded-sm p-1 overflow-hidden"
+    >
+      <div
+        class="flex gap-1 items-center bg-surface-900 p-1 rounded-sm border border-surface-800"
+      >
+        <select
+          class="flex-1 text-[0.6rem] bg-surface-950 border border-surface-800 rounded-sm py-0.5 px-1"
+          bind:value={uploadLane}
         >
-          <track kind="captions" srclang="en" label="Captions" src="data:text/vtt,WEBVTT" />
-        </video>
-      {:else}
-        <div class="placeholder">Upload and select a video clip to start playback.</div>
-      {/if}
-
-      <div class="transport-row">
-        <button on:click={play}>Play</button>
-        <button on:click={pause}>Pause</button>
-        <button on:click={stop}>Stop</button>
-        <button class:active={envelopeGateEnabled} on:click={toggleEnvelopeGate}>
-          Gate {envelopeGateEnabled ? 'On' : 'Off'}
-        </button>
-        <span>Section: {$activeSection}</span>
-        <span>Clip {Math.max(1, selectedClipIndex() + 1)}</span>
-        <span>EnvA {$audioBands.envelopeA.toFixed(2)} / Thr {$reactiveEnvelope.threshold.toFixed(2)}</span>
+          <option value={0}>L1</option>
+          <option value={1}>L2</option>
+          <option value={2}>L3</option>
+        </select>
+        <label
+          class="btn btn-sm preset-filled-primary-500 text-[0.6rem] py-0.5 px-2 cursor-pointer font-bold m-0"
+          for="video-upload">Add</label
+        >
+        <input
+          id="video-upload"
+          type="file"
+          accept="video/*"
+          multiple
+          on:change={uploadClips}
+          class="hidden"
+        />
       </div>
 
-      <TimelinePanel
-        {duration}
-        {currentTime}
-        onSeek={seekTo}
-        {autoSwitchEnabled}
-        {quantizeMode}
-        onToggleAutoSwitch={toggleAutoSwitch}
-        onSetQuantizeMode={setQuantizeMode}
-      />
-      <p class="status">{status}</p>
+      <div class="flex-1 overflow-y-auto flex flex-col gap-1 pr-1">
+        {#if clips.length === 0}
+          <div class="text-[0.6rem] text-surface-500 text-center mt-2">
+            No clips
+          </div>
+        {/if}
+        {#each clips as clip}
+          <div
+            class="group flex flex-col p-1 rounded-sm border {clip.id ===
+            selectedClipId
+              ? 'border-primary-500 bg-surface-900'
+              : 'border-surface-800 bg-surface-950'} hover:bg-surface-900"
+          >
+            <div class="flex justify-between items-start gap-1">
+              <button
+                class="text-left truncate flex-1 text-[0.6rem] font-bold text-surface-200"
+                on:click={() => selectClip(clip.id)}>{clip.name}</button
+              >
+              <button
+                class="text-[0.55rem] text-surface-500 hover:text-error-500"
+                on:click={() => removeClip(clip.id)}>✕</button
+              >
+            </div>
+            <div class="text-[0.55rem] text-surface-500 flex justify-between">
+              <span>L{clip.lane + 1} S{clip.slot + 1}</span>
+              <span>{clip.sizeMb}M</span>
+            </div>
+          </div>
+        {/each}
+      </div>
+    </div>
+
+    <div
+      class="flex-1 flex flex-col items-center justify-center min-w-0 bg-surface-950 border border-surface-800 rounded-sm overflow-hidden relative p-1"
+    >
+      <div
+        class="w-full max-h-full aspect-video bg-black rounded-sm border border-surface-900 relative flex overflow-hidden shadow-xl shadow-black/50 mx-auto"
+      >
+        <div class="absolute top-1 right-1 z-10 flex gap-1 pointer-events-none">
+          <span
+            class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-surface-800 rounded-sm font-mono backdrop-blur-sm"
+            >C: {Math.max(1, selectedClipIndex() + 1)}</span
+          >
+          <span
+            class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-surface-800 rounded-sm font-mono backdrop-blur-sm"
+            >{$activeSection}</span
+          >
+        </div>
+
+        {#if selectedClip()}
+          <video
+            bind:this={player}
+            src={selectedClip()?.url}
+            class="w-full h-full object-contain"
+            playsinline
+            loop
+            on:loadedmetadata={() => {
+              duration = player?.duration ?? 0;
+              if (player && pendingSeekRatio !== null && duration > 0) {
+                player.currentTime = Math.min(
+                  duration * pendingSeekRatio,
+                  Math.max(0, duration - 0.05),
+                );
+                pendingSeekRatio = null;
+              }
+              if (player && resumeAfterSwitch) {
+                void player.play();
+                resumeAfterSwitch = false;
+              }
+            }}
+            on:timeupdate={() => {
+              currentTime = player?.currentTime ?? 0;
+              maybeQuantizedSwitch();
+            }}
+          >
+            <track
+              kind="captions"
+              srclang="en"
+              label="Captions"
+              src="data:text/vtt,WEBVTT"
+            />
+          </video>
+        {:else}
+          <div
+            class="w-full h-full flex items-center justify-center text-[0.65rem] text-surface-600 font-mono tracking-widest bg-surface-900"
+          >
+            NO SIGNAL
+          </div>
+        {/if}
+
+        <div class="absolute bottom-1 w-full px-1 z-10">
+          <div
+            class="flex justify-between items-center bg-surface-950/90 border border-surface-800 rounded-sm p-1 backdrop-blur-sm"
+          >
+            <div class="flex gap-1">
+              <button
+                class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
+                on:click={play}>▶</button
+              >
+              <button
+                class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
+                on:click={pause}>⏸</button
+              >
+              <button
+                class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
+                on:click={stop}>⏹</button
+              >
+            </div>
+            <button
+              class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {envelopeGateEnabled
+                ? 'border-primary-500 bg-primary-500/20 text-primary-400'
+                : 'border-surface-700 bg-surface-800 text-surface-400'}"
+              on:click={toggleEnvelopeGate}
+            >
+              GATE {envelopeGateEnabled ? "ON" : "OFF"}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
-</section>
-
-<style>
-  .deck-shell {
-    border: 1px solid var(--border);
-    border-radius: 0.6rem;
-    padding: 0.65rem;
-    background: rgba(15, 15, 16, 0.94);
-  }
-
-  .deck-head {
-    margin-bottom: 0.55rem;
-  }
-
-  .deck-head h2 {
-    margin: 0;
-    font-size: 1.02rem;
-  }
-
-  .deck-head p {
-    margin: 0.2rem 0 0;
-    color: var(--muted);
-    font-size: 0.76rem;
-  }
-
-  .deck-grid {
-    display: grid;
-    grid-template-columns: 220px minmax(0, 1fr);
-    gap: 0.6rem;
-  }
-
-  .matrix-shell {
-    margin-bottom: 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: 0.5rem;
-    background: var(--surface-0);
-    overflow: hidden;
-  }
-
-  .matrix-row {
-    display: grid;
-    grid-template-columns: 94px minmax(0, 1fr);
-    border-top: 1px solid var(--border);
-  }
-
-  .matrix-row:first-child {
-    border-top: none;
-  }
-
-  .layer-rail {
-    border-right: 1px solid var(--border);
-    background: #121213;
-    display: grid;
-    grid-template-columns: 1fr auto auto;
-    align-items: center;
-    gap: 0.22rem;
-    padding: 0.24rem 0.3rem;
-  }
-
-  .layer-rail span {
-    font-size: 0.64rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
-
-  .mini {
-    width: 1.2rem;
-    height: 1.2rem;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text);
-    border-radius: 0.24rem;
-    font-size: 0.56rem;
-    font-weight: 700;
-    cursor: pointer;
-    padding: 0;
-  }
-
-  .mini.active {
-    border-color: var(--accent-ok);
-    color: var(--accent-ok);
-  }
-
-  .cells {
-    display: grid;
-    grid-template-columns: repeat(14, minmax(0, 1fr));
-    gap: 1px;
-    background: var(--border);
-    padding: 1px;
-  }
-
-  .cell {
-    border: 1px solid #1e1e21;
-    background: #09090a;
-    color: #6f6f75;
-    min-height: 2.2rem;
-    padding: 0.2rem 0.22rem;
-    cursor: pointer;
-    text-align: left;
-    font-size: 0.58rem;
-    line-height: 1.05;
-    font-weight: 600;
-    text-transform: uppercase;
-    overflow: hidden;
-  }
-
-  .cell span {
-    display: -webkit-box;
-    line-clamp: 3;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .cell.active {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent) inset;
-    color: #f7e8d0;
-    background: linear-gradient(180deg, #1d1610 0%, #0f0f11 100%);
-  }
-
-  .clip-bin {
-    border: 1px solid var(--border);
-    border-radius: 0.5rem;
-    padding: 0.45rem;
-    background: var(--surface-0);
-  }
-
-  #video-upload {
-    display: none;
-  }
-
-  .upload-row {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 0.3rem;
-    align-items: center;
-    margin-bottom: 0.34rem;
-  }
-
-  .upload-row label {
-    font-size: 0.67rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-  }
-
-  .upload-row select {
-    height: 1.55rem;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text);
-    border-radius: 0.3rem;
-    font-size: 0.7rem;
-  }
-
-  .upload-btn {
-    display: inline-block;
-    width: 100%;
-    text-align: center;
-    height: 1.95rem;
-    line-height: 1.85rem;
-    padding: 0 0.65rem;
-    border-radius: 0.42rem;
-    background: var(--accent);
-    border: 1px solid var(--accent);
-    color: #1a1408;
-    font-size: 0.78rem;
-    font-weight: 700;
-    cursor: pointer;
-    margin-bottom: 0.45rem;
-  }
-
-  .clip-list {
-    display: grid;
-    gap: 0.3rem;
-    max-height: 320px;
-    overflow: auto;
-  }
-
-  .empty {
-    color: var(--muted);
-    margin: 0;
-    font-size: 0.74rem;
-  }
-
-  .clip-card {
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
-    padding: 0.32rem;
-    background: var(--surface-1);
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-areas:
-      'pick remove'
-      'meta remove';
-    column-gap: 0.35rem;
-    row-gap: 0.1rem;
-  }
-
-  .clip-card.active {
-    border-color: var(--accent);
-  }
-
-  .clip-pick {
-    grid-area: pick;
-    border: none;
-    background: transparent;
-    color: var(--text);
-    text-align: left;
-    width: 100%;
-    cursor: pointer;
-    padding: 0;
-    font-weight: 600;
-    font-size: 0.76rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .clip-card p {
-    grid-area: meta;
-    margin: 0;
-    color: var(--muted);
-    font-size: 0.69rem;
-  }
-
-  .clip-remove {
-    grid-area: remove;
-    align-self: center;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text);
-    border-radius: 0.32rem;
-    height: 1.42rem;
-    padding: 0 0.4rem;
-    cursor: pointer;
-    font-size: 0.67rem;
-  }
-
-  .player-shell {
-    border: 1px solid var(--border);
-    border-radius: 0.5rem;
-    padding: 0.45rem;
-    background: var(--surface-0);
-    display: grid;
-    gap: 0.45rem;
-  }
-
-  video,
-  .placeholder {
-    width: 100%;
-    height: 260px;
-    border-radius: 0.42rem;
-    border: 1px solid var(--border);
-    background: #09090a;
-  }
-
-  .placeholder {
-    display: grid;
-    place-items: center;
-    color: var(--muted);
-    text-align: center;
-    padding: 1rem;
-    font-size: 0.8rem;
-  }
-
-  .transport-row {
-    display: flex;
-    align-items: center;
-    gap: 0.32rem;
-    flex-wrap: wrap;
-  }
-
-  .transport-row button {
-    height: 1.78rem;
-    border-radius: 0.36rem;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text);
-    padding: 0 0.5rem;
-    font-size: 0.73rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .transport-row button.active {
-    border-color: var(--accent-ok);
-    color: var(--accent-ok);
-  }
-
-  .transport-row span {
-    color: var(--muted);
-    font-size: 0.73rem;
-  }
-
-  .status {
-    margin: 0;
-    color: var(--accent-ok);
-    font-size: 0.73rem;
-  }
-
-  @media (max-width: 1100px) {
-    .matrix-row {
-      grid-template-columns: 1fr;
-    }
-
-    .layer-rail {
-      border-right: none;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .cells {
-      grid-template-columns: repeat(7, minmax(0, 1fr));
-    }
-
-    .deck-grid {
-      grid-template-columns: 1fr;
-    }
-
-    video,
-    .placeholder {
-      height: 230px;
-    }
-  }
-</style>
+</div>

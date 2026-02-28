@@ -1,0 +1,93 @@
+@import "tailwindcss";
+@import "@skeletonlabs/skeleton-svelte";
+
+@theme {
+  /* Override skeleton preset dark mode colors to neutral charcoal */
+  --color-surface-50: #f4f4f5;
+  --color-surface-100: #e4e4e7;
+  --color-surface-200: #d4d4d8;
+  --color-surface-300: #a1a1aa;
+  --color-surface-400: #71717a;
+  --color-surface-500: #52525b;
+  --color-surface-600: #3f3f46;
+  --color-surface-700: #27272a;
+  --color-surface-800: #18181b;
+  --color-surface-900: #141415;
+  --color-surface-950: #0a0a0b;
+
+  --color-primary-50: #fffbeb;
+  --color-primary-100: #fef3c7;
+  --color-primary-200: #fde68a;
+  --color-primary-300: #fcd34d;
+  --color-primary-400: #fbbf24;
+  --color-primary-500: #f59e0b;
+  --color-primary-600: #d97706;
+  --color-primary-700: #b45309;
+  --color-primary-800: #92400e;
+  --color-primary-900: #78350f;
+  --color-primary-950: #451a03;
+}
+
+body {
+  @apply bg-surface-950 text-surface-50 overflow-hidden h-screen w-screen flex flex-col p-2 text-xs select-none;
+  /* Make all text small and dense to match professional NLE */
+}
+
+/* Compact specific generic overrides */
+button,
+input,
+select {
+  @apply text-xs leading-none;
+}
+
+/* Custom rectangular NLE sliders */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 0.6rem;
+  background: transparent;
+  margin: 0;
+  padding: 0;
+  cursor: ew-resize;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 0.2rem;
+  border-radius: 0.05rem;
+  background: var(--color-surface-800);
+  border: 1px solid var(--color-surface-700);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0.35rem;
+  /* ~ 1:2 ratio relative to height */
+  height: 0.8rem;
+  margin-top: -0.3rem;
+  /* Center vertically (track is 0.2, thumb is 0.8) */
+  border-radius: 0.05rem;
+  border: 1px solid var(--color-surface-950);
+  background: var(--color-primary-500);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.2);
+}
+
+input[type='range']::-moz-range-track {
+  height: 0.2rem;
+  border-radius: 0.05rem;
+  background: var(--color-surface-800);
+  border: 1px solid var(--color-surface-700);
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 0.35rem;
+  height: 0.8rem;
+  border-radius: 0.05rem;
+  border: 1px solid var(--color-surface-950);
+  background: var(--color-primary-500);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.2);
+}
+
+input[type='range']:focus-visible {
+  outline: none;
+}

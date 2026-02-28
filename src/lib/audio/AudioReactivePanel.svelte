@@ -1,13 +1,24 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
-  import { activeSection, audioBands, audioRuntime, markers, reactiveEnvelope, tempoState } from '$lib/stores/runtime';
-  import { analyzeEssentiaRhythm, analyzeEssentiaStructure } from '$lib/services/essentia';
-  import type { EngineCueMarker } from '$lib/types/timeline';
-  import type { ReactiveBandTarget } from '$lib/types/engine';
+  import { onDestroy, onMount } from "svelte";
+  import {
+    activeSection,
+    audioBands,
+    audioRuntime,
+    markers,
+    reactiveEnvelope,
+    tempoState,
+  } from "$lib/stores/runtime";
+  import {
+    analyzeEssentiaRhythm,
+    analyzeEssentiaStructure,
+  } from "$lib/services/essentia";
+  import type { EngineCueMarker } from "$lib/types/timeline";
+  import type { ReactiveBandTarget } from "$lib/types/engine";
 
-  const targets: ReactiveBandTarget[] = ['low', 'mid', 'high', 'full'];
+  const targets: ReactiveBandTarget[] = ["low", "mid", "high", "full"];
   const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
-  const defaultEssentiaApiKey = (import.meta.env.VITE_ESSENTIA_API_KEY as string | undefined)?.trim() ?? '';
+  const defaultEssentiaApiKey =
+    (import.meta.env.VITE_ESSENTIA_API_KEY as string | undefined)?.trim() ?? "";
 
   let audioElement: HTMLAudioElement | null = null;
   let fileInput: HTMLInputElement | null = null;
@@ -20,13 +31,13 @@
   let rafId = 0;
   let lastFrameMs = 0;
   let fftData: Uint8Array | null = null;
-  let loadedTrackUrl = '';
+  let loadedTrackUrl = "";
   let loadedMediaFile: File | null = null;
-  let status = 'Load a song (or mic) to drive FFT and envelopes.';
-  let essentiaApiKey = '';
+  let status = "Load a song (or mic) to drive FFT and envelopes.";
+  let essentiaApiKey = "";
   let essentiaLoading = false;
 
-  let target: ReactiveBandTarget = 'full';
+  let target: ReactiveBandTarget = "full";
   let attackMs = 27;
   let releaseMs = 190;
   let threshold = 0.12;
@@ -36,11 +47,17 @@
   let envelopeB = 0;
 
   const normalizeSectionLabel = (label: string): string => {
-    const clean = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    return clean.length > 0 ? clean : 'section';
+    const clean = label
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-");
+    return clean.length > 0 ? clean : "section";
   };
 
-  const compileSectionMarkers = (sections: Array<{ start: number; label: string }>, bpm: number): EngineCueMarker[] => {
+  const compileSectionMarkers = (
+    sections: Array<{ start: number; label: string }>,
+    bpm: number,
+  ): EngineCueMarker[] => {
     const beatsPerSecond = Math.max(20, Math.min(300, bpm)) / 60;
     return sections.map((section, index) => {
       const totalBeats = Math.max(0, section.start * beatsPerSecond);
@@ -51,12 +68,12 @@
         section: normalizeSectionLabel(section.label || `section-${index + 1}`),
         bar,
         beat,
-        quantize: '1n',
-        action: 'trigger_clip',
+        quantize: "1n",
+        action: "trigger_clip",
         payload: {
           start: section.start,
-          source: 'essentia'
-        }
+          source: "essentia",
+        },
       };
     });
   };
@@ -67,7 +84,7 @@
       attackMs,
       releaseMs,
       threshold,
-      sensitivity
+      sensitivity,
     });
   };
 
@@ -78,7 +95,7 @@
 
   const ensureAudioGraph = async () => {
     if (!context) context = new AudioContext();
-    if (context.state === 'suspended') await context.resume();
+    if (context.state === "suspended") await context.resume();
 
     if (!analyser) {
       analyser = context.createAnalyser();
@@ -107,12 +124,12 @@
     disconnectSources();
     mediaNode.connect(analyser);
     monitorGain.gain.value = 1;
-    status = 'File source routed to FFT engine.';
+    status = "File source routed to FFT engine.";
   };
 
   const attachMicSource = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      status = 'Microphone capture is unavailable in this browser.';
+      status = "Microphone capture is unavailable in this browser.";
       return;
     }
 
@@ -128,8 +145,8 @@
       audio: {
         echoCancellation: false,
         noiseSuppression: false,
-        autoGainControl: false
-      }
+        autoGainControl: false,
+      },
     });
 
     micNode = context.createMediaStreamSource(micStream);
@@ -139,13 +156,13 @@
     audioElement?.pause();
 
     audioRuntime.set({
-      source: 'mic',
-      trackName: 'External audio input',
+      source: "mic",
+      trackName: "External audio input",
       isPlaying: true,
       currentTime: 0,
-      duration: 0
+      duration: 0,
     });
-    status = 'Mic source live. Monitoring disabled to prevent feedback.';
+    status = "Mic source live. Monitoring disabled to prevent feedback.";
   };
 
   const teardownMic = () => {
@@ -162,7 +179,10 @@
 
     const nyquist = context.sampleRate / 2;
     const start = Math.max(0, Math.floor((startHz / nyquist) * fftData.length));
-    const end = Math.min(fftData.length - 1, Math.floor((endHz / nyquist) * fftData.length));
+    const end = Math.min(
+      fftData.length - 1,
+      Math.floor((endHz / nyquist) * fftData.length),
+    );
     if (end <= start) return 0;
 
     let total = 0;
@@ -172,7 +192,13 @@
     return total / ((end - start + 1) * 255);
   };
 
-  const smoothEnvelope = (current: number, next: number, dtMs: number, riseMs: number, fallMs: number): number => {
+  const smoothEnvelope = (
+    current: number,
+    next: number,
+    dtMs: number,
+    riseMs: number,
+    fallMs: number,
+  ): number => {
     const tau = next > current ? Math.max(6, riseMs) : Math.max(6, fallMs);
     const alpha = 1 - Math.exp(-dtMs / tau);
     return current + (next - current) * alpha;
@@ -193,15 +219,38 @@
       const full = bandAverage(20, 14000);
 
       const targetedRaw =
-        target === 'low' ? low : target === 'mid' ? mid : target === 'high' ? high : full;
-      const scaledTarget = clamp01(((targetedRaw - threshold) / Math.max(0.01, 1 - threshold)) * sensitivity);
-      const scaledFull = clamp01(((full - threshold) / Math.max(0.01, 1 - threshold)) * sensitivity);
+        target === "low"
+          ? low
+          : target === "mid"
+            ? mid
+            : target === "high"
+              ? high
+              : full;
+      const scaledTarget = clamp01(
+        ((targetedRaw - threshold) / Math.max(0.01, 1 - threshold)) *
+          sensitivity,
+      );
+      const scaledFull = clamp01(
+        ((full - threshold) / Math.max(0.01, 1 - threshold)) * sensitivity,
+      );
 
       const dt = lastFrameMs > 0 ? timestamp - lastFrameMs : 16.67;
       lastFrameMs = timestamp;
 
-      envelopeA = smoothEnvelope(envelopeA, scaledTarget, dt, attackMs, releaseMs);
-      envelopeB = smoothEnvelope(envelopeB, scaledFull, dt, attackMs * 1.6, releaseMs * 1.45);
+      envelopeA = smoothEnvelope(
+        envelopeA,
+        scaledTarget,
+        dt,
+        attackMs,
+        releaseMs,
+      );
+      envelopeB = smoothEnvelope(
+        envelopeB,
+        scaledFull,
+        dt,
+        attackMs * 1.6,
+        releaseMs * 1.45,
+      );
 
       audioBands.set({
         low,
@@ -210,7 +259,7 @@
         full,
         envelopeA,
         envelopeB,
-        peak: envelopeA > 0.82 || high > 0.9
+        peak: envelopeA > 0.82 || high > 0.9,
       });
     };
 
@@ -220,7 +269,7 @@
   const loadTrack = async (event: Event) => {
     const file = (event.currentTarget as HTMLInputElement).files?.[0];
     if (!file || !audioElement) {
-      status = 'No media file selected.';
+      status = "No media file selected.";
       return;
     }
 
@@ -234,55 +283,60 @@
     loadedMediaFile = file;
 
     audioRuntime.set({
-      source: 'file',
+      source: "file",
       trackName: file.name,
       isPlaying: false,
       currentTime: 0,
-      duration: 0
+      duration: 0,
     });
 
     status = `Loaded track: ${file.name}`;
   };
 
   const playTrack = async () => {
-    if (!audioElement || !$audioRuntime.trackName || $audioRuntime.source !== 'file') return;
+    if (
+      !audioElement ||
+      !$audioRuntime.trackName ||
+      $audioRuntime.source !== "file"
+    )
+      return;
     await ensureAudioGraph();
     await audioElement.play();
-    status = 'Track playback running.';
+    status = "Track playback running.";
   };
 
   const pauseTrack = () => {
     audioElement?.pause();
-    status = 'Track paused.';
+    status = "Track paused.";
   };
 
   const stopTrack = () => {
     if (!audioElement) return;
     audioElement.pause();
     audioElement.currentTime = 0;
-    status = 'Track stopped.';
+    status = "Track stopped.";
   };
 
   const toggleMic = async () => {
-    if ($audioRuntime.source === 'mic') {
+    if ($audioRuntime.source === "mic") {
       teardownMic();
       if (audioElement?.src) {
         await attachFileSource();
         audioRuntime.update((state) => ({
           ...state,
-          source: 'file',
-          isPlaying: false
+          source: "file",
+          isPlaying: false,
         }));
-        status = 'Mic disabled. File source restored.';
+        status = "Mic disabled. File source restored.";
       } else {
         audioRuntime.set({
-          source: 'none',
-          trackName: 'No track loaded',
+          source: "none",
+          trackName: "No track loaded",
           isPlaying: false,
           currentTime: 0,
-          duration: 0
+          duration: 0,
         });
-        status = 'Mic disabled.';
+        status = "Mic disabled.";
       }
       return;
     }
@@ -290,17 +344,17 @@
     try {
       await attachMicSource();
     } catch (error) {
-      status = `Mic enable failed: ${error instanceof Error ? error.message : 'unknown error'}`;
+      status = `Mic enable failed: ${error instanceof Error ? error.message : "unknown error"}`;
     }
   };
 
   const runEssentiaDetection = async () => {
     if (!loadedMediaFile) {
-      status = 'Load an audio/video file before Essentia detection.';
+      status = "Load an audio/video file before Essentia detection.";
       return;
     }
     if (!essentiaApiKey.trim()) {
-      status = 'Add an Essentia API key to run BPM/section detection.';
+      status = "Add an Essentia API key to run BPM/section detection.";
       return;
     }
 
@@ -308,25 +362,29 @@
     try {
       const [rhythm, structure] = await Promise.all([
         analyzeEssentiaRhythm(loadedMediaFile, essentiaApiKey.trim()),
-        analyzeEssentiaStructure(loadedMediaFile, essentiaApiKey.trim())
+        analyzeEssentiaStructure(loadedMediaFile, essentiaApiKey.trim()),
       ]);
 
-      const markersFromSections = compileSectionMarkers(structure.sections, rhythm.bpm);
+      const markersFromSections = compileSectionMarkers(
+        structure.sections,
+        rhythm.bpm,
+      );
       markers.set(markersFromSections);
-      if (markersFromSections.length > 0) activeSection.set(markersFromSections[0].section);
+      if (markersFromSections.length > 0)
+        activeSection.set(markersFromSections[0].section);
 
       const firstBeatSeconds = rhythm.beats[0] ?? 0;
       tempoState.update((state) => ({
         ...state,
         bpm: rhythm.bpm,
         confidence: rhythm.confidence,
-        source: 'auto',
-        downbeatEpochMs: Date.now() - firstBeatSeconds * 1000
+        source: "auto",
+        downbeatEpochMs: Date.now() - firstBeatSeconds * 1000,
       }));
 
       status = `Essentia detected BPM ${rhythm.bpm.toFixed(2)} (${(rhythm.confidence * 100).toFixed(0)}%) and ${markersFromSections.length} sections`;
     } catch (error) {
-      status = `Essentia detection failed: ${error instanceof Error ? error.message : 'unknown error'}`;
+      status = `Essentia detection failed: ${error instanceof Error ? error.message : "unknown error"}`;
     } finally {
       essentiaLoading = false;
     }
@@ -335,14 +393,15 @@
   onMount(() => {
     applyEnvelopeSettings();
     startFftLoop();
-    if (typeof window !== 'undefined') {
-      const storedKey = window.localStorage.getItem('essentia_api_key')?.trim() ?? '';
+    if (typeof window !== "undefined") {
+      const storedKey =
+        window.localStorage.getItem("essentia_api_key")?.trim() ?? "";
       essentiaApiKey = storedKey || defaultEssentiaApiKey;
     }
   });
 
-  $: if (typeof window !== 'undefined') {
-    window.localStorage.setItem('essentia_api_key', essentiaApiKey);
+  $: if (typeof window !== "undefined") {
+    window.localStorage.setItem("essentia_api_key", essentiaApiKey);
   }
 
   onDestroy(() => {
@@ -356,128 +415,256 @@
   });
 </script>
 
-<section class="panel">
-  <header class="head">
-    <h2>Audio Reactive</h2>
-    <p>Song or live input drives FFT + dual envelopes for clip policy and timing gates.</p>
-  </header>
+<div
+  class="h-full flex flex-col gap-1 bg-surface-900 border border-surface-800 rounded-md p-1 font-sans"
+>
+  <div
+    class="flex-none flex items-center justify-between border-b border-surface-800 pb-1 mb-1"
+  >
+    <h2
+      class="text-[0.65rem] font-bold uppercase tracking-widest text-surface-400 m-0"
+    >
+      Audio Reactive Analyzer
+    </h2>
+    <p class="text-[0.6rem] m-0 truncate text-primary-500">{status}</p>
+  </div>
 
-  <div class="layout">
-    <div class="controls">
-      <div class="row">
-        <label for="track-file" class="btn btn-accent">Load Song</label>
-        <input id="track-file" bind:this={fileInput} type="file" accept="audio/*,video/*" on:change={loadTrack} />
-        <button class="btn" on:click={toggleMic}>{$audioRuntime.source === 'mic' ? 'Mic Off' : 'Mic In'}</button>
+  <div class="flex flex-row gap-1 flex-1 min-h-0">
+    <div class="flex-1 flex flex-col gap-1 text-[0.65rem]">
+      <div
+        class="flex flex-wrap gap-1 items-center bg-surface-950 p-1 border border-surface-800 rounded-sm"
+      >
+        <label
+          for="track-file"
+          class="btn btn-sm bg-primary-500/20 text-primary-500 border border-primary-500 hover:bg-primary-500 hover:text-surface-950 px-2 py-0.5 rounded-sm font-bold cursor-pointer m-0"
+          >Load Song</label
+        >
+        <input
+          id="track-file"
+          bind:this={fileInput}
+          type="file"
+          accept="audio/*,video/*"
+          on:change={loadTrack}
+          class="hidden"
+        />
+        <button
+          class="bg-surface-800 border border-surface-700 hover:bg-surface-700 px-2 py-0.5 rounded-sm"
+          on:click={toggleMic}
+          >{$audioRuntime.source === "mic" ? "Mic Off" : "Mic In"}</button
+        >
       </div>
 
-      <div class="row row-essentia">
-        <label for="essentia-key">Essentia Key</label>
+      <div
+        class="flex flex-wrap gap-1 items-center bg-surface-950 p-1 border border-surface-800 rounded-sm"
+      >
+        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+          >Essentia Key</label
+        >
         <input
-          id="essentia-key"
           type="password"
           bind:value={essentiaApiKey}
           placeholder="X-API-Key"
           autocomplete="off"
           spellcheck="false"
+          class="flex-1 bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm"
         />
-        <button class="btn btn-accent" disabled={essentiaLoading} on:click={runEssentiaDetection}>
-          {essentiaLoading ? 'Detecting…' : 'Detect BPM+Sections'}
-        </button>
+        <button
+          class="bg-primary-500/20 text-primary-500 border border-primary-500 hover:bg-primary-500 hover:text-surface-950 px-1.5 py-0.5 rounded-sm font-bold"
+          disabled={essentiaLoading}
+          on:click={runEssentiaDetection}
+          >{essentiaLoading ? "Detecting…" : "Detect BPM+Sections"}</button
+        >
       </div>
 
-      <div class="track">{ $audioRuntime.trackName }</div>
-
-      <div class="row row-tight">
-        <span class="mono">{$tempoState.bpm.toFixed(2)}</span>
-        <button class="icon" on:click={playTrack}>▶</button>
-        <button class="icon" on:click={pauseTrack}>▮▮</button>
-        <button class="icon" on:click={stopTrack}>■</button>
-        <span class="clock">
-          {$audioRuntime.currentTime.toFixed(1)} / {Math.max($audioRuntime.duration, 0).toFixed(1)}s
-        </span>
+      <div
+        class="bg-surface-800 border border-surface-700 rounded-sm px-1.5 py-0.5 text-surface-200 truncate font-mono text-[0.6rem]"
+      >
+        {$audioRuntime.trackName}
       </div>
 
-      <div class="row row-node">
-        <label for="reactive-target">Node</label>
-        <select id="reactive-target" bind:value={target} on:change={applyEnvelopeSettings}>
+      <div
+        class="flex flex-wrap gap-1 items-center bg-surface-950 p-1 border border-surface-800 rounded-sm font-mono text-[0.65rem]"
+      >
+        <span
+          class="w-12 bg-surface-900 border border-surface-700 px-1 text-center rounded-sm"
+          >{$tempoState.bpm.toFixed(2)}</span
+        >
+        <button
+          class="bg-surface-800 border border-surface-700 hover:bg-surface-700 px-1.5 py-0.5 rounded-sm"
+          on:click={playTrack}>▶</button
+        >
+        <button
+          class="bg-surface-800 border border-surface-700 hover:bg-surface-700 px-1.5 py-0.5 rounded-sm"
+          on:click={pauseTrack}>⏸</button
+        >
+        <button
+          class="bg-surface-800 border border-surface-700 hover:bg-surface-700 px-1.5 py-0.5 rounded-sm"
+          on:click={stopTrack}>⏹</button
+        >
+        <span class="text-surface-400 ml-auto"
+          >{$audioRuntime.currentTime.toFixed(1)} / {Math.max(
+            $audioRuntime.duration,
+            0,
+          ).toFixed(1)}s</span
+        >
+      </div>
+
+      <div
+        class="grid grid-cols-[auto_1fr_auto_40px_auto_40px] items-center gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm"
+      >
+        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+          >Node</label
+        >
+        <select
+          bind:value={target}
+          on:change={applyEnvelopeSettings}
+          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm outline-none"
+        >
           {#each targets as option}
             <option value={option}>{option}</option>
           {/each}
         </select>
-
-        <label for="reactive-attack">Attack</label>
+        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+          >Attk</label
+        >
         <input
-          id="reactive-attack"
           type="number"
           min="5"
           max="800"
           step="1"
           bind:value={attackMs}
           on:input={applyEnvelopeSettings}
+          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
         />
-
-        <label for="reactive-release">Release</label>
+        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+          >Rel</label
+        >
         <input
-          id="reactive-release"
           type="number"
           min="20"
           max="1500"
           step="5"
           bind:value={releaseMs}
           on:input={applyEnvelopeSettings}
+          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
         />
       </div>
 
-      <div class="row row-envelope">
-        <label for="reactive-threshold">Threshold</label>
+      <div
+        class="grid grid-cols-[auto_1fr_auto_1fr] items-center gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm"
+      >
+        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+          >Thr</label
+        >
         <input
-          id="reactive-threshold"
           type="range"
           min="0"
           max="0.8"
           step="0.01"
           bind:value={threshold}
           on:input={applyEnvelopeSettings}
+          class="accent-primary-500 h-1 bg-surface-800 rounded-sm appearance-none outline-none"
         />
-
-        <label for="reactive-sensitivity">Sensitivity</label>
+        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+          >Sens</label
+        >
         <input
-          id="reactive-sensitivity"
           type="range"
           min="0.5"
           max="2.5"
           step="0.01"
           bind:value={sensitivity}
           on:input={applyEnvelopeSettings}
+          class="accent-primary-500 h-1 bg-surface-800 rounded-sm appearance-none outline-none"
         />
       </div>
 
-      <div class="envelopes">
-        <div class="env-item">
-          <span>Envelope A</span>
-          <div class="meter"><div style={`width:${$audioBands.envelopeA * 100}%`}></div></div>
+      <div class="flex flex-col gap-1 mt-1">
+        <div
+          class="grid grid-cols-[60px_1fr] items-center gap-1 text-[0.6rem] uppercase text-surface-400 font-bold"
+        >
+          <span>Env A</span>
+          <div
+            class="h-1.5 bg-surface-800 rounded-full overflow-hidden border border-surface-700"
+          >
+            <div
+              class="h-full bg-gradient-to-r from-primary-600 to-primary-400 transition-all duration-75"
+              style={`width:${$audioBands.envelopeA * 100}%`}
+            ></div>
+          </div>
         </div>
-        <div class="env-item">
-          <span>Envelope B</span>
-          <div class="meter"><div style={`width:${$audioBands.envelopeB * 100}%`}></div></div>
+        <div
+          class="grid grid-cols-[60px_1fr] items-center gap-1 text-[0.6rem] uppercase text-surface-400 font-bold"
+        >
+          <span>Env B</span>
+          <div
+            class="h-1.5 bg-surface-800 rounded-full overflow-hidden border border-surface-700"
+          >
+            <div
+              class="h-full bg-gradient-to-r from-primary-600 to-primary-400 transition-all duration-75"
+              style={`width:${$audioBands.envelopeB * 100}%`}
+            ></div>
+          </div>
         </div>
       </div>
-      <p class="explain">
-        Sensitivity scales the selected Node band before envelope smoothing. Attack controls rise time, Release controls decay time.
-      </p>
     </div>
 
-    <aside class="states">
-      <h3>Signal Gate</h3>
-      <p class="legend"><span class="dash"></span>Threshold</p>
-      <p class="legend"><span class="block"></span>Peak armed</p>
-      <div class="bands">
-        <div><span>L</span><div class="meter"><div style={`width:${$audioBands.low * 100}%`}></div></div></div>
-        <div><span>M</span><div class="meter"><div style={`width:${$audioBands.mid * 100}%`}></div></div></div>
-        <div><span>H</span><div class="meter"><div style={`width:${$audioBands.high * 100}%`}></div></div></div>
-        <div><span>F</span><div class="meter"><div style={`width:${$audioBands.full * 100}%`}></div></div></div>
+    <aside
+      class="w-32 flex-none bg-surface-950 border border-surface-800 rounded-sm p-1 flex flex-col gap-1"
+    >
+      <h3
+        class="text-[0.55rem] font-bold text-surface-400 uppercase tracking-widest m-0 pb-1 border-b border-surface-800"
+      >
+        Signal Gate
+      </h3>
+
+      <div
+        class="flex flex-col gap-[2px] mt-1 flex-1 text-[0.6rem] uppercase text-surface-400"
+      >
+        <div class="grid grid-cols-[10px_1fr] items-center gap-1">
+          <span>L</span>
+          <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
+            <div
+              class="h-full bg-surface-300 transition-all duration-75"
+              style={`width:${$audioBands.low * 100}%`}
+            ></div>
+          </div>
+        </div>
+        <div class="grid grid-cols-[10px_1fr] items-center gap-1">
+          <span>M</span>
+          <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
+            <div
+              class="h-full bg-surface-300 transition-all duration-75"
+              style={`width:${$audioBands.mid * 100}%`}
+            ></div>
+          </div>
+        </div>
+        <div class="grid grid-cols-[10px_1fr] items-center gap-1">
+          <span>H</span>
+          <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
+            <div
+              class="h-full bg-surface-300 transition-all duration-75"
+              style={`width:${$audioBands.high * 100}%`}
+            ></div>
+          </div>
+        </div>
+        <div class="grid grid-cols-[10px_1fr] items-center gap-1">
+          <span>F</span>
+          <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
+            <div
+              class="h-full bg-surface-300 transition-all duration-75"
+              style={`width:${$audioBands.full * 100}%`}
+            ></div>
+          </div>
+        </div>
       </div>
-      <div class:live={$audioBands.peak} class="peak-light">{$audioBands.peak ? 'Peak On' : 'Peak Off'}</div>
+      <div
+        class="flex-none h-12 rounded-sm border flex items-center justify-center text-[0.65rem] font-bold mt-auto {$audioBands.peak
+          ? 'border-primary-500 text-primary-500 shadow-[inset_0_0_8px_rgba(245,158,11,0.2)] bg-primary-500/10'
+          : 'border-surface-800 text-surface-600 bg-surface-900'}"
+      >
+        {$audioBands.peak ? "PEAK ON" : "PEAK OFF"}
+      </div>
     </aside>
   </div>
 
@@ -485,339 +672,18 @@
     bind:this={audioElement}
     preload="metadata"
     on:loadedmetadata={() =>
-      audioRuntime.update((state) => ({
-        ...state,
-        duration: Number.isFinite(audioElement?.duration) ? audioElement?.duration ?? 0 : 0
+      audioRuntime.update((s) => ({
+        ...s,
+        duration: Number.isFinite(audioElement?.duration)
+          ? (audioElement?.duration ?? 0)
+          : 0,
       }))}
     on:timeupdate={() =>
-      audioRuntime.update((state) => ({
-        ...state,
-        currentTime: audioElement?.currentTime ?? 0
+      audioRuntime.update((s) => ({
+        ...s,
+        currentTime: audioElement?.currentTime ?? 0,
       }))}
-    on:play={() =>
-      audioRuntime.update((state) => ({
-        ...state,
-        isPlaying: true
-      }))}
-    on:pause={() =>
-      audioRuntime.update((state) => ({
-        ...state,
-        isPlaying: false
-      }))}
+    on:play={() => audioRuntime.update((s) => ({ ...s, isPlaying: true }))}
+    on:pause={() => audioRuntime.update((s) => ({ ...s, isPlaying: false }))}
   ></audio>
-
-  <p class="status">{status}</p>
-</section>
-
-<style>
-  .panel {
-    border: 1px solid var(--border);
-    border-radius: 0.6rem;
-    padding: 0.65rem;
-    background: rgba(15, 15, 16, 0.94);
-  }
-
-  .head h2 {
-    margin: 0 0 0.2rem;
-    font-size: 1rem;
-  }
-
-  .head p {
-    margin: 0 0 0.45rem;
-    color: var(--muted);
-    font-size: 0.73rem;
-  }
-
-  .layout {
-    display: grid;
-    gap: 0.55rem;
-    grid-template-columns: minmax(0, 1fr) 170px;
-  }
-
-  .controls {
-    display: grid;
-    gap: 0.36rem;
-  }
-
-  .row {
-    display: flex;
-    gap: 0.28rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .row-tight {
-    gap: 0.22rem;
-  }
-
-  .row-node {
-    display: grid;
-    grid-template-columns: auto minmax(95px, 1fr) auto 84px auto 84px;
-    align-items: center;
-    gap: 0.28rem;
-  }
-
-  .row-envelope {
-    display: grid;
-    grid-template-columns: auto 1fr auto 1fr;
-    align-items: center;
-    gap: 0.28rem;
-  }
-
-  .row-essentia {
-    display: grid;
-    grid-template-columns: auto minmax(120px, 1fr) auto;
-    align-items: center;
-    gap: 0.28rem;
-  }
-
-  label {
-    color: var(--muted);
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-  }
-
-  #track-file {
-    display: none;
-  }
-
-  .btn,
-  select,
-  input[type='number'],
-  input[type='password'] {
-    height: 1.82rem;
-    border: 1px solid var(--border);
-    border-radius: 0.36rem;
-    background: var(--surface-2);
-    color: var(--text);
-    padding: 0 0.48rem;
-    font: inherit;
-    font-size: 0.72rem;
-    font-weight: 600;
-  }
-
-  .btn {
-    cursor: pointer;
-  }
-
-  .btn-accent {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #1a1408;
-  }
-
-  .mono {
-    min-width: 5.3rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
-    background: var(--surface-2);
-    padding: 0.25rem 0.42rem;
-    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
-    font-size: 0.78rem;
-  }
-
-  .icon {
-    width: 1.85rem;
-    height: 1.85rem;
-    border: 1px solid var(--border);
-    border-radius: 0.36rem;
-    background: var(--surface-2);
-    color: var(--text);
-    cursor: pointer;
-    font-size: 0.72rem;
-  }
-
-  .clock {
-    color: var(--muted);
-    font-size: 0.7rem;
-  }
-
-  .track {
-    border: 1px solid var(--border);
-    border-radius: 0.36rem;
-    background: var(--surface-1);
-    padding: 0.3rem 0.42rem;
-    color: var(--text);
-    font-size: 0.72rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  input[type='range'] {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 1rem;
-    background: transparent;
-    margin: 0;
-    padding: 0;
-  }
-
-  input[type='range']::-webkit-slider-runnable-track {
-    height: 0.28rem;
-    border-radius: 0.06rem;
-    background: #e4e4e7;
-    border: 1px solid #3f3f46;
-  }
-
-  input[type='range']::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 0.34rem;
-    height: 1rem;
-    margin-top: -0.4rem;
-    border-radius: 0.06rem;
-    border: 1px solid #1f1f23;
-    background: var(--accent);
-    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.2);
-  }
-
-  input[type='range']::-moz-range-track {
-    height: 0.28rem;
-    border-radius: 0.06rem;
-    background: #e4e4e7;
-    border: 1px solid #3f3f46;
-  }
-
-  input[type='range']::-moz-range-thumb {
-    width: 0.34rem;
-    height: 1rem;
-    border-radius: 0.06rem;
-    border: 1px solid #1f1f23;
-    background: var(--accent);
-    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.2);
-  }
-
-  input[type='range']:focus-visible {
-    outline: none;
-  }
-
-  .envelopes {
-    display: grid;
-    gap: 0.24rem;
-  }
-
-  .explain {
-    margin: 0.16rem 0 0;
-    color: var(--muted);
-    font-size: 0.67rem;
-    line-height: 1.25;
-  }
-
-  .env-item {
-    display: grid;
-    grid-template-columns: 75px 1fr;
-    align-items: center;
-    gap: 0.3rem;
-    color: var(--muted);
-    font-size: 0.7rem;
-    text-transform: uppercase;
-  }
-
-  .meter {
-    height: 0.55rem;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--surface-2);
-    overflow: hidden;
-  }
-
-  .meter > div {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent), var(--accent-ok));
-    transition: width 80ms linear;
-  }
-
-  .states {
-    border: 1px solid var(--border);
-    border-radius: 0.45rem;
-    background: var(--surface-0);
-    padding: 0.4rem;
-    display: grid;
-    align-content: start;
-    gap: 0.3rem;
-  }
-
-  .states h3 {
-    margin: 0;
-    color: var(--accent-strong);
-    font-size: 0.95rem;
-  }
-
-  .legend {
-    margin: 0;
-    color: var(--text);
-    font-size: 0.72rem;
-    display: flex;
-    align-items: center;
-    gap: 0.34rem;
-  }
-
-  .dash {
-    width: 56px;
-    border-top: 2px dashed var(--text);
-  }
-
-  .block {
-    width: 56px;
-    height: 0.65rem;
-    background: #d4d4d8;
-  }
-
-  .bands {
-    display: grid;
-    gap: 0.22rem;
-    margin-top: 0.1rem;
-  }
-
-  .bands > div {
-    display: grid;
-    grid-template-columns: 10px 1fr;
-    align-items: center;
-    gap: 0.22rem;
-    color: var(--muted);
-    font-size: 0.66rem;
-  }
-
-  .peak-light {
-    margin-top: 0.2rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
-    min-height: 72px;
-    display: grid;
-    place-items: center;
-    color: var(--text);
-    font-size: 1rem;
-    font-weight: 700;
-  }
-
-  .peak-light.live {
-    border-color: var(--accent-ok);
-    box-shadow: 0 0 0 1px var(--accent-ok) inset, 0 0 14px rgba(16, 185, 129, 0.34);
-    color: var(--accent-ok);
-  }
-
-  .status {
-    margin: 0.45rem 0 0;
-    color: var(--accent-ok);
-    font-size: 0.72rem;
-  }
-
-  audio {
-    display: none;
-  }
-
-  @media (max-width: 1180px) {
-    .layout {
-      grid-template-columns: 1fr;
-    }
-
-    .row-node,
-    .row-envelope,
-    .row-essentia {
-      grid-template-columns: auto 1fr;
-    }
-  }
-</style>
+</div>
