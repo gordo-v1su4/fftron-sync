@@ -10,6 +10,7 @@ import type {
 } from '$lib/types/engine';
 import type { EngineCueMarker } from '$lib/types/timeline';
 import type { WaveformOverview } from '$lib/audio/wav';
+import type { EssentiaFullResponse } from '$lib/services/essentia';
 
 export interface TimelineSeekRequest {
   time: number;
@@ -33,12 +34,20 @@ export interface EssentiaAnalysisState {
   boundaries: number[];
   sections: EssentiaDetectedSection[];
   energyCurve: number[];
+  full: EssentiaFullResponse | null;
   updatedAtMs: number | null;
 }
 
 export interface AutomationRuntimeState {
   speed: number;
   stutter: number;
+}
+
+export interface AutomationBoundsState {
+  speedMin: number;
+  speedMax: number;
+  stutterMin: number;
+  stutterMax: number;
 }
 
 export const runtimeCapabilities = writable<RuntimeCapabilities>({
@@ -69,7 +78,7 @@ export const detectedTempo = writable<DetectedTempoState>({
 export const scheduledActions = writable<ScheduledAction[]>([]);
 
 export const markers = writable<EngineCueMarker[]>([]);
-export const activeSection = writable<string>('verse-a');
+export const activeSection = writable<string>('');
 
 export const audioRuntime = writable<AudioRuntimeState>({
   source: 'none',
@@ -106,9 +115,17 @@ export const essentiaAnalysis = writable<EssentiaAnalysisState>({
   boundaries: [],
   sections: [],
   energyCurve: [],
+  full: null,
   updatedAtMs: null
 });
 export const automationRuntime = writable<AutomationRuntimeState>({
   speed: 0.5,
   stutter: 0
+});
+
+export const automationBounds = writable<AutomationBoundsState>({
+  speedMin: 0.5,
+  speedMax: 2.1,
+  stutterMin: 0,
+  stutterMax: 1
 });

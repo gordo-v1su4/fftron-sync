@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import {
     activeSection,
+    automationBounds,
     audioBands,
     audioRuntime,
     detectedTempo,
@@ -13,8 +14,10 @@
     waveformOverview,
   } from "$lib/stores/runtime";
   import {
+    analyzeEssentiaFull,
     analyzeEssentiaRhythm,
     analyzeEssentiaStructure,
+    type EssentiaFullResponse,
     type EssentiaStructureSection,
   } from "$lib/services/essentia";
   import {
@@ -29,7 +32,7 @@
   const importEnv = import.meta.env as Record<string, string | undefined>;
   const defaultEssentiaApiKey =
     (importEnv.VITE_ESSENTIA_API_KEY ?? importEnv.ESSENTIA_API_KEY ?? "").trim();
-  const waveformResolution = 720;
+  const waveformResolution = 4096;
 
   let audioElement: HTMLAudioElement | null = null;
   let fileInput: HTMLInputElement | null = null;
@@ -54,6 +57,12 @@
   let releaseMs = 190;
   let threshold = 0.12;
   let sensitivity = 1;
+  let speedMinValue = 0.5;
+  let speedMaxValue = 2.1;
+  let stutterMinValue = 0;
+  let stutterMaxValue = 1;
+  const speedDomainMin = 0.25;
+  const speedDomainMax = 4;
 
   let envelopeA = 0;
   let envelopeB = 0;
@@ -100,6 +109,32 @@
     });
   };
 
+  const detectEssentiaWithFallback = async (
+    file: File,
+    apiKey: string,
+  ): Promise<{ full: EssentiaFullResponse; usedFallback: boolean }> => {
+    try {
+      const full = await analyzeEssentiaFull(file, apiKey);
+      return { full, usedFallback: false };
+    } catch (fullError) {
+      const [rhythm, structure] = await Promise.all([
+        analyzeEssentiaRhythm(file, apiKey),
+        analyzeEssentiaStructure(file, apiKey),
+      ]);
+
+      const fallbackFull: EssentiaFullResponse = {
+        ...rhythm,
+        structure,
+        classification: null,
+        tonal: null,
+        vocals: null,
+      };
+
+      console.warn("Essentia /analyze/full failed; used rhythm+structure fallback", fullError);
+      return { full: fallbackFull, usedFallback: true };
+    }
+  };
+
   const applyEnvelopeSettings = () => {
     reactiveEnvelope.set({
       target,
@@ -107,6 +142,31 @@
       releaseMs,
       threshold,
       sensitivity,
+    });
+  };
+
+  const applyAutomationBounds = () => {
+    const speedMin = Math.max(
+      speedDomainMin,
+      Math.min(speedMinValue, speedDomainMax - 0.01),
+    );
+    const speedMax = Math.min(
+      speedDomainMax,
+      Math.max(speedMaxValue, speedMin + 0.01),
+    );
+    const stutterMin = Math.max(0, Math.min(stutterMinValue, 0.999));
+    const stutterMax = Math.min(1, Math.max(stutterMaxValue, stutterMin + 0.001));
+
+    speedMinValue = Number(speedMin.toFixed(2));
+    speedMaxValue = Number(speedMax.toFixed(2));
+    stutterMinValue = Number(stutterMin.toFixed(2));
+    stutterMaxValue = Number(stutterMax.toFixed(2));
+
+    automationBounds.set({
+      speedMin: speedMinValue,
+      speedMax: speedMaxValue,
+      stutterMin: stutterMinValue,
+      stutterMax: stutterMaxValue,
     });
   };
 
@@ -324,6 +384,7 @@
 
     if (loadedTrackUrl) URL.revokeObjectURL(loadedTrackUrl);
     loadedTrackUrl = URL.createObjectURL(file);
+    audioElement.currentTime = 0;
     audioElement.src = loadedTrackUrl;
     audioElement.load();
     await attachFileSource();
@@ -336,6 +397,8 @@
       currentTime: 0,
       duration: 0,
     });
+    markers.set([]);
+    activeSection.set("");
     essentiaAnalysis.set({
       bpm: null,
       confidence: null,
@@ -343,6 +406,7 @@
       boundaries: [],
       sections: [],
       energyCurve: [],
+      full: null,
       updatedAtMs: null,
     });
 
@@ -353,6 +417,10 @@
           resolution: waveformResolution,
         });
         waveformOverview.set(waveform);
+        audioRuntime.update((state) => ({
+          ...state,
+          duration: waveform.durationSeconds,
+        }));
         status = `Loaded ${file.name} (${waveform.channelCount}ch ${waveform.sampleRate}Hz WAV)`;
       } catch (error) {
         waveformOverview.set(null);
@@ -440,42 +508,40 @@
     const requestId = ++detectionRequestId;
     essentiaLoading = true;
     try {
-      const [rhythm, structure] = await Promise.all([
-        analyzeEssentiaRhythm(file, apiKey),
-        analyzeEssentiaStructure(file, apiKey),
-      ]);
+      const { full, usedFallback } = await detectEssentiaWithFallback(file, apiKey);
       if (requestId !== detectionRequestId) return;
 
       const markersFromSections = compileSectionMarkers(
-        structure.sections,
-        rhythm.bpm,
+        full.structure.sections,
+        full.bpm,
       );
       markers.set(markersFromSections);
       if (markersFromSections.length > 0)
         activeSection.set(markersFromSections[0].section);
+      else activeSection.set("");
 
-      const firstBeatSeconds = rhythm.beats[0] ?? 0;
-      const normalizedConfidence = clamp01(rhythm.confidence);
+      const firstBeatSeconds = full.beats[0] ?? 0;
+      const normalizedConfidence = clamp01(full.confidence);
       tempoState.update((state) => ({
         ...state,
-        bpm: rhythm.bpm,
+        bpm: full.bpm,
         confidence: normalizedConfidence,
         source: "auto",
         downbeatEpochMs: Date.now() - firstBeatSeconds * 1000,
       }));
       detectedTempo.set({
-        bpm: rhythm.bpm,
+        bpm: full.bpm,
         confidence: normalizedConfidence,
         source: "essentia",
         updatedAtMs: Date.now(),
       });
       const sectionCounts = new Map<string, number>();
       essentiaAnalysis.set({
-        bpm: rhythm.bpm,
+        bpm: full.bpm,
         confidence: normalizedConfidence,
-        duration: rhythm.duration,
-        boundaries: structure.boundaries,
-        sections: structure.sections.map((section, index) => {
+        duration: full.duration,
+        boundaries: full.structure.boundaries,
+        sections: full.structure.sections.map((section, index) => {
           const baseSection = normalizeSectionLabel(
             section.label || `section-${index + 1}`,
           );
@@ -492,12 +558,27 @@
             energy: section.energy,
           };
         }),
-        energyCurve: rhythm.energy.curve ?? [],
+        energyCurve: full.energy.curve ?? [],
+        full,
         updatedAtMs: Date.now(),
       });
 
-      status = `Essentia detected BPM ${rhythm.bpm.toFixed(2)} (${(normalizedConfidence * 100).toFixed(0)}%) and ${markersFromSections.length} sections`;
+      status = usedFallback
+        ? "Essentia detection complete (fallback mode)."
+        : "Essentia detection complete.";
     } catch (error) {
+      markers.set([]);
+      activeSection.set("");
+      essentiaAnalysis.set({
+        bpm: null,
+        confidence: null,
+        duration: null,
+        boundaries: [],
+        sections: [],
+        energyCurve: [],
+        full: null,
+        updatedAtMs: null,
+      });
       status = `Essentia detection failed: ${error instanceof Error ? error.message : "unknown error"}`;
     } finally {
       if (requestId === detectionRequestId) {
@@ -510,6 +591,10 @@
     applyEnvelopeSettings();
     startFftLoop();
     essentiaApiKey = defaultEssentiaApiKey;
+    speedMinValue = $automationBounds.speedMin;
+    speedMaxValue = $automationBounds.speedMax;
+    stutterMinValue = $automationBounds.stutterMin;
+    stutterMaxValue = $automationBounds.stutterMax;
   });
 
   $: if (
@@ -539,6 +624,8 @@
     monitorGain?.disconnect();
     if (context) void context.close();
     waveformOverview.set(null);
+    markers.set([]);
+    activeSection.set("");
     essentiaAnalysis.set({
       bpm: null,
       confidence: null,
@@ -546,6 +633,7 @@
       boundaries: [],
       sections: [],
       energyCurve: [],
+      full: null,
       updatedAtMs: null,
     });
   });
@@ -617,7 +705,7 @@
         >
         <span class="text-emerald-200">
           {$detectedTempo.bpm !== null
-            ? `${$detectedTempo.bpm.toFixed(2)} (${(($detectedTempo.confidence ?? 0) * 100).toFixed(0)}%)`
+            ? $detectedTempo.bpm.toFixed(2)
             : "Waiting for detection"}
         </span>
       </div>
@@ -659,7 +747,7 @@
       </div>
 
       <div
-        class="grid grid-cols-[auto_1fr_auto_40px_auto_40px] items-center gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm"
+        class="grid grid-cols-[auto_minmax(0,132px)_auto_46px_auto_46px] items-center justify-start gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm"
       >
         <label
           for="reactive-target"
@@ -670,7 +758,7 @@
           id="reactive-target"
           bind:value={target}
           on:change={applyEnvelopeSettings}
-          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm outline-none"
+          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm outline-none max-w-[132px]"
         >
           {#each targets as option}
             <option value={option}>{option}</option>
@@ -689,7 +777,7 @@
           step="1"
           bind:value={attackMs}
           on:input={applyEnvelopeSettings}
-          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
+          class="w-[46px] bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
         />
         <label
           for="reactive-release"
@@ -704,7 +792,7 @@
           step="5"
           bind:value={releaseMs}
           on:input={applyEnvelopeSettings}
-          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
+          class="w-[46px] bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
         />
       </div>
 
@@ -771,65 +859,114 @@
           </div>
         </div>
       </div>
+      <div
+        class="grid grid-cols-[auto_52px_auto_52px_auto_52px_auto_52px] items-center gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm font-mono text-[0.58rem]"
+      >
+        <span class="text-surface-500 uppercase font-bold">SPD</span>
+        <input
+          type="number"
+          min={speedDomainMin}
+          max={speedDomainMax}
+          step="0.01"
+          bind:value={speedMinValue}
+          on:input={applyAutomationBounds}
+          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
+          aria-label="Speed minimum"
+        />
+        <span class="text-surface-500 uppercase font-bold">MAX</span>
+        <input
+          type="number"
+          min={speedDomainMin}
+          max={speedDomainMax}
+          step="0.01"
+          bind:value={speedMaxValue}
+          on:input={applyAutomationBounds}
+          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
+          aria-label="Speed maximum"
+        />
+        <span class="text-surface-500 uppercase font-bold">STT</span>
+        <input
+          type="number"
+          min="0"
+          max="1"
+          step="0.01"
+          bind:value={stutterMinValue}
+          on:input={applyAutomationBounds}
+          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
+          aria-label="Stutter minimum"
+        />
+        <span class="text-surface-500 uppercase font-bold">MAX</span>
+        <input
+          type="number"
+          min="0"
+          max="1"
+          step="0.01"
+          bind:value={stutterMaxValue}
+          on:input={applyAutomationBounds}
+          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
+          aria-label="Stutter maximum"
+        />
+      </div>
+
+      <div
+        class="bg-surface-950 border border-surface-800 rounded-sm p-1 flex flex-col gap-1"
+      >
+        <h3
+          class="text-[0.55rem] font-bold text-surface-400 uppercase tracking-widest m-0 pb-1 border-b border-surface-800"
+        >
+          Signal Gate
+        </h3>
+
+        <div
+          class="flex flex-col gap-[2px] mt-1 text-[0.6rem] uppercase text-surface-400"
+        >
+          <div class="grid grid-cols-[10px_1fr] items-center gap-1">
+            <span>L</span>
+            <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
+              <div
+                class="h-full bg-surface-300 transition-all duration-75"
+                style={`width:${$audioBands.low * 100}%`}
+              ></div>
+            </div>
+          </div>
+          <div class="grid grid-cols-[10px_1fr] items-center gap-1">
+            <span>M</span>
+            <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
+              <div
+                class="h-full bg-surface-300 transition-all duration-75"
+                style={`width:${$audioBands.mid * 100}%`}
+              ></div>
+            </div>
+          </div>
+          <div class="grid grid-cols-[10px_1fr] items-center gap-1">
+            <span>H</span>
+            <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
+              <div
+                class="h-full bg-surface-300 transition-all duration-75"
+                style={`width:${$audioBands.high * 100}%`}
+              ></div>
+            </div>
+          </div>
+          <div class="grid grid-cols-[10px_1fr] items-center gap-1">
+            <span>F</span>
+            <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
+              <div
+                class="h-full bg-surface-300 transition-all duration-75"
+                style={`width:${$audioBands.full * 100}%`}
+              ></div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          class="h-10 rounded-sm border flex items-center justify-center text-[0.6rem] font-bold {$audioBands.peak
+            ? 'border-primary-500 text-primary-500 shadow-[inset_0_0_8px_rgba(245,158,11,0.2)] bg-primary-500/10'
+            : 'border-surface-800 text-surface-600 bg-surface-900'}"
+        >
+          {$audioBands.peak ? "PEAK ON" : "PEAK OFF"}
+        </div>
+      </div>
     </div>
-
-    <aside
-      class="w-32 flex-none bg-surface-950 border border-surface-800 rounded-sm p-1 flex flex-col gap-1"
-    >
-      <h3
-        class="text-[0.55rem] font-bold text-surface-400 uppercase tracking-widest m-0 pb-1 border-b border-surface-800"
-      >
-        Signal Gate
-      </h3>
-
-      <div
-        class="flex flex-col gap-[2px] mt-1 flex-1 text-[0.6rem] uppercase text-surface-400"
-      >
-        <div class="grid grid-cols-[10px_1fr] items-center gap-1">
-          <span>L</span>
-          <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
-            <div
-              class="h-full bg-surface-300 transition-all duration-75"
-              style={`width:${$audioBands.low * 100}%`}
-            ></div>
-          </div>
-        </div>
-        <div class="grid grid-cols-[10px_1fr] items-center gap-1">
-          <span>M</span>
-          <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
-            <div
-              class="h-full bg-surface-300 transition-all duration-75"
-              style={`width:${$audioBands.mid * 100}%`}
-            ></div>
-          </div>
-        </div>
-        <div class="grid grid-cols-[10px_1fr] items-center gap-1">
-          <span>H</span>
-          <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
-            <div
-              class="h-full bg-surface-300 transition-all duration-75"
-              style={`width:${$audioBands.high * 100}%`}
-            ></div>
-          </div>
-        </div>
-        <div class="grid grid-cols-[10px_1fr] items-center gap-1">
-          <span>F</span>
-          <div class="h-1 bg-surface-800 rounded-sm overflow-hidden">
-            <div
-              class="h-full bg-surface-300 transition-all duration-75"
-              style={`width:${$audioBands.full * 100}%`}
-            ></div>
-          </div>
-        </div>
-      </div>
-      <div
-        class="flex-none h-12 rounded-sm border flex items-center justify-center text-[0.65rem] font-bold mt-auto {$audioBands.peak
-          ? 'border-primary-500 text-primary-500 shadow-[inset_0_0_8px_rgba(245,158,11,0.2)] bg-primary-500/10'
-          : 'border-surface-800 text-surface-600 bg-surface-900'}"
-      >
-        {$audioBands.peak ? "PEAK ON" : "PEAK OFF"}
-      </div>
-    </aside>
   </div>
 
   <audio
@@ -842,12 +979,30 @@
           ? (audioElement?.duration ?? 0)
           : 0,
       }))}
-    on:timeupdate={() =>
+    on:play={() =>
       audioRuntime.update((s) => ({
         ...s,
-        currentTime: audioElement?.currentTime ?? 0,
+        isPlaying: true,
+        currentTime: audioElement?.currentTime ?? s.currentTime,
       }))}
-    on:play={() => audioRuntime.update((s) => ({ ...s, isPlaying: true }))}
-    on:pause={() => audioRuntime.update((s) => ({ ...s, isPlaying: false }))}
+    on:pause={() =>
+      audioRuntime.update((s) => ({
+        ...s,
+        isPlaying: false,
+        currentTime: audioElement?.currentTime ?? s.currentTime,
+      }))}
+    on:seeked={() =>
+      audioRuntime.update((s) => ({
+        ...s,
+        currentTime: audioElement?.currentTime ?? s.currentTime,
+      }))}
+    on:ended={() =>
+      audioRuntime.update((s) => ({
+        ...s,
+        isPlaying: false,
+        currentTime: Number.isFinite(audioElement?.duration)
+          ? (audioElement?.duration ?? s.currentTime)
+          : s.currentTime,
+      }))}
   ></audio>
 </div>

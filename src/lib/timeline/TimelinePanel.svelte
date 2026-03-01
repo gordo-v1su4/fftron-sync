@@ -2,12 +2,13 @@
   import { onMount } from "svelte";
   import {
     activeSection,
+    automationBounds,
     automationRuntime,
     essentiaAnalysis,
     markers,
     waveformOverview,
   } from "$lib/stores/runtime";
-  import { buildWaveformPath } from "$lib/audio/wav";
+  import { buildWaveformViewportPath } from "$lib/audio/wav";
 
   export let duration = 0;
   export let currentTime = 0;
@@ -43,12 +44,15 @@
     speedInterpolation: InterpolationMode;
   }
 
-  type TimelineLaneId = "clips" | "waveform" | "stutter" | "speed";
+  type TimelineLaneId = "waveform" | "stutter" | "speed";
 
-  const fallbackSections = ["intro", "verse-a", "chorus-a", "bridge", "outro"];
   const markerTagAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const zoomSteps = [1, 2, 4, 8, 16];
-  const neutralAutomationSpeed = (1 - 0.45) / 1.75;
+  const laneLabelWidthPx = 110;
+  const speedDomainMin = 0.25;
+  const speedDomainMax = 4;
+  const stutterDomainMin = 0;
+  const stutterDomainMax = 1;
 
   let zoomLevel = 1;
   let followPlayhead = true;
@@ -85,7 +89,6 @@
   let lastAutomationSpeed = 0.5;
   let lastAutomationStutter = 0;
   let laneMuteState: Record<TimelineLaneId, boolean> = {
-    clips: false,
     waveform: false,
     stutter: false,
     speed: false,
@@ -107,15 +110,7 @@
     end: number;
     index: number;
     total: number;
-  }> = fallbackSections.map((section, index) => ({
-    section,
-    label: section,
-    rawLabel: section,
-    start: index,
-    end: index + 1,
-    index: 1,
-    total: 1,
-  }));
+  }> = [];
   let sectionBands: Array<{
     section: string;
     label: string;
@@ -137,6 +132,12 @@
   }> = [];
   let currentSpeedValue = 0.5;
   let currentStutterValue = 0;
+  let speedMinBound = 0.5;
+  let speedMaxBound = 2.1;
+  let stutterMinBound = 0;
+  let stutterMaxBound = 1;
+  let currentSpeedRate = 1;
+  let currentStutterAmount = 0;
 
   let stutterEditorEl: HTMLDivElement | null = null;
   let speedEditorEl: HTMLDivElement | null = null;
@@ -144,6 +145,21 @@
 
   const clamp = (value: number, min: number, max: number): number =>
     Math.max(min, Math.min(max, value));
+
+  const mapNormalizedToRange = (
+    normalized: number,
+    min: number,
+    max: number,
+  ): number => min + clamp(normalized, 0, 1) * (max - min);
+
+  const mapRangeToNormalized = (
+    value: number,
+    min: number,
+    max: number,
+  ): number => {
+    const span = Math.max(0.0001, max - min);
+    return clamp((value - min) / span, 0, 1);
+  };
 
   const formatClock = (seconds: number): string => {
     if (!Number.isFinite(seconds) || seconds < 0) return "00:00";
@@ -569,7 +585,23 @@
     const viewportSpan = Math.max(0.0001, viewportEnd - viewportStart);
     const localXNorm = clamp((event.clientX - rect.left) / rect.width, 0, 1);
     const xNormRaw = clamp(viewportStart + localXNorm * viewportSpan, 0, 1);
-    const yNorm = clamp(1 - (event.clientY - rect.top) / rect.height, 0, 1);
+    const displayYNorm = clamp(1 - (event.clientY - rect.top) / rect.height, 0, 1);
+    const yNorm =
+      activeDrag.track === "speed"
+        ? mapRangeToNormalized(
+            mapNormalizedToRange(displayYNorm, speedDomainMin, speedDomainMax),
+            speedMinBound,
+            speedMaxBound,
+          )
+        : mapRangeToNormalized(
+            mapNormalizedToRange(
+              displayYNorm,
+              stutterDomainMin,
+              stutterDomainMax,
+            ),
+            stutterMinBound,
+            stutterMaxBound,
+          );
 
     const points =
       activeDrag.track === "stutter"
@@ -689,34 +721,31 @@
         const startRaw = payload.start;
         const endRaw = payload.end;
         const energyRaw = payload.energy;
+        const labelRaw = payload.label;
+        const sourceRaw = payload.source;
         const start = typeof startRaw === "number" ? startRaw : null;
         const end = typeof endRaw === "number" ? endRaw : null;
         const energy = typeof energyRaw === "number" ? energyRaw : 0.5;
+        const label =
+          typeof labelRaw === "string" && labelRaw.trim().length > 0
+            ? labelRaw
+            : marker.section;
+        const isEssentiaMarker = sourceRaw === "essentia";
         return {
           id: marker.id || `mk-${index + 1}`,
           section: marker.section,
-          label: marker.section,
+          label,
           start,
           end,
           energy,
+          isEssentiaMarker,
         };
       })
-      .filter((entry) => entry.start !== null)
+      .filter((entry) => entry.start !== null && entry.isEssentiaMarker)
       .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
 
     if (!fromMarkers.length) {
-      return fallbackSections.map((name, index) => {
-        const start = (index / fallbackSections.length) * safeDurationSeconds;
-        const end = ((index + 1) / fallbackSections.length) * safeDurationSeconds;
-        return {
-          id: `fallback-${name}`,
-          section: name,
-          label: name,
-          start,
-          end,
-          energy: 0.5,
-        };
-      });
+      return [];
     }
 
     return fromMarkers.map((entry, index) => {
@@ -774,6 +803,9 @@
   $: if (currentSection && $activeSection !== currentSection.section) {
     activeSection.set(currentSection.section);
   }
+  $: if (!timelineSections.length && $activeSection !== "") {
+    activeSection.set("");
+  }
 
   $: sectionButtonItems = (() => {
     const totals = new Map<string, number>();
@@ -816,6 +848,10 @@
     0,
     100,
   );
+  $: playheadLabelOffsetPx =
+    playheadPosition < 4 ? 2 : playheadPosition > 96 ? -44 : -18;
+  $: playheadNibOffsetPx =
+    playheadPosition < 2 ? -1 : playheadPosition > 98 ? -10 : -5;
 
   $: scrubMin = viewportStart * safeDuration;
   $: scrubMax = Math.max(scrubMin + 0.01, viewportEnd * safeDuration);
@@ -863,17 +899,57 @@
     })
     .filter((band) => band.width > 0.2);
 
-  $: peaks = $waveformOverview?.peaks ?? [];
-  $: peakStartIndex = Math.floor(viewportStart * peaks.length);
-  $: peakEndIndex = Math.max(
-    peakStartIndex + 8,
-    Math.ceil(viewportEnd * peaks.length),
+  $: waveformMinValues = $waveformOverview?.minValues ?? [];
+  $: waveformMaxValues = $waveformOverview?.maxValues ?? [];
+  $: waveformPath = buildWaveformViewportPath(
+    waveformMinValues,
+    waveformMaxValues,
+    1000,
+    100,
+    viewportStart,
+    viewportEnd,
+    1600,
   );
-  $: visiblePeaks = peaks.slice(peakStartIndex, peakEndIndex);
-  $: waveformPath = buildWaveformPath(visiblePeaks, 1000, 100);
+
+  $: speedMinBound = clamp(
+    Math.min($automationBounds.speedMin, $automationBounds.speedMax - 0.01),
+    speedDomainMin,
+    speedDomainMax - 0.01,
+  );
+  $: speedMaxBound = clamp(
+    Math.max($automationBounds.speedMax, speedMinBound + 0.01),
+    speedMinBound + 0.01,
+    speedDomainMax,
+  );
+  $: stutterMinBound = clamp(
+    Math.min($automationBounds.stutterMin, $automationBounds.stutterMax - 0.001),
+    stutterDomainMin,
+    stutterDomainMax - 0.001,
+  );
+  $: stutterMaxBound = clamp(
+    Math.max($automationBounds.stutterMax, stutterMinBound + 0.001),
+    stutterMinBound + 0.001,
+    stutterDomainMax,
+  );
+  $: displayStutterPointsData = stutterPoints.map((point) => ({
+    x: point.x,
+    y: mapRangeToNormalized(
+      mapNormalizedToRange(point.y, stutterMinBound, stutterMaxBound),
+      stutterDomainMin,
+      stutterDomainMax,
+    ),
+  }));
+  $: displaySpeedPointsData = speedPoints.map((point) => ({
+    x: point.x,
+    y: mapRangeToNormalized(
+      mapNormalizedToRange(point.y, speedMinBound, speedMaxBound),
+      speedDomainMin,
+      speedDomainMax,
+    ),
+  }));
 
   $: stutterPaths = buildViewportAutomationPaths(
-    stutterPoints,
+    displayStutterPointsData,
     stutterInterpolation,
     1000,
     100,
@@ -881,7 +957,7 @@
     viewportEnd,
   );
   $: speedRampPaths = buildViewportAutomationPaths(
-    speedPoints,
+    displaySpeedPointsData,
     speedInterpolation,
     1000,
     100,
@@ -889,11 +965,15 @@
     viewportEnd,
   );
   $: visibleStutterPoints = clipPointsToViewport(
-    stutterPoints,
+    displayStutterPointsData,
     viewportStart,
     viewportEnd,
   );
-  $: visibleSpeedPoints = clipPointsToViewport(speedPoints, viewportStart, viewportEnd);
+  $: visibleSpeedPoints = clipPointsToViewport(
+    displaySpeedPointsData,
+    viewportStart,
+    viewportEnd,
+  );
 
   $: essentiaPreset = createEssentiaPreset();
   $: availablePresets = [
@@ -924,9 +1004,6 @@
     stutterInterpolation,
     normalizedPlayhead,
   );
-  $: clipLaneActive = laneSoloState === null
-    ? !laneMuteState.clips
-    : laneSoloState === "clips";
   $: waveformLaneActive = laneSoloState === null
     ? !laneMuteState.waveform
     : laneSoloState === "waveform";
@@ -936,10 +1013,28 @@
   $: speedLaneActive = laneSoloState === null
     ? !laneMuteState.speed
     : laneSoloState === "speed";
+  $: neutralSpeedNorm = mapRangeToNormalized(1, speedMinBound, speedMaxBound);
+  $: neutralStutterNorm = mapRangeToNormalized(
+    0,
+    stutterMinBound,
+    stutterMaxBound,
+  );
   $: effectiveSpeedAutomationValue = speedLaneActive
     ? currentSpeedValue
-    : neutralAutomationSpeed;
-  $: effectiveStutterAutomationValue = stutterLaneActive ? currentStutterValue : 0;
+    : neutralSpeedNorm;
+  $: effectiveStutterAutomationValue = stutterLaneActive
+    ? currentStutterValue
+    : neutralStutterNorm;
+  $: currentSpeedRate = mapNormalizedToRange(
+    effectiveSpeedAutomationValue,
+    speedMinBound,
+    speedMaxBound,
+  );
+  $: currentStutterAmount = mapNormalizedToRange(
+    effectiveStutterAutomationValue,
+    stutterMinBound,
+    stutterMaxBound,
+  );
   $: if (
     Math.abs(effectiveSpeedAutomationValue - lastAutomationSpeed) > 0.002 ||
     Math.abs(effectiveStutterAutomationValue - lastAutomationStutter) > 0.002
@@ -979,22 +1074,28 @@
       <div
         class="flex bg-surface-950 rounded-sm border border-surface-800 overflow-x-auto max-w-[36rem] scrollbar-thin scrollbar-track-surface-950 scrollbar-thumb-surface-700"
       >
-        {#each sectionButtonItems as sectionItem}
-          <button
-            class="px-2 py-1 text-[0.52rem] font-bold uppercase tracking-tighter border-r border-surface-800 last:border-0 leading-none {$activeSection ===
-            sectionItem.section
-              ? 'bg-primary-500 text-surface-950'
-              : 'text-surface-400 hover:bg-surface-800'}"
-            aria-pressed={$activeSection === sectionItem.section}
-            on:click={() => seekToSection(sectionItem.section)}
-            title={`${sectionItem.rawLabel} ${sectionItem.total > 1 ? `${sectionItem.index}/${sectionItem.total} • ` : ""}${formatClock(sectionItem.start)} - ${formatClock(sectionItem.end)}`}
-          >
-            <span class="block">{sectionItem.label}</span>
-            <span class="block opacity-70 text-[0.46rem] mt-0.5">
-              {formatClock(sectionItem.start)}
-            </span>
-          </button>
-        {/each}
+        {#if sectionButtonItems.length}
+          {#each sectionButtonItems as sectionItem}
+            <button
+              class="px-2 py-1 text-[0.52rem] font-bold uppercase tracking-tighter border-r border-surface-800 last:border-0 leading-none {$activeSection ===
+              sectionItem.section
+                ? 'bg-primary-500 text-surface-950'
+                : 'text-surface-400 hover:bg-surface-800'}"
+              aria-pressed={$activeSection === sectionItem.section}
+              on:click={() => seekToSection(sectionItem.section)}
+              title={`${sectionItem.rawLabel} ${sectionItem.total > 1 ? `${sectionItem.index}/${sectionItem.total} • ` : ""}${formatClock(sectionItem.start)} - ${formatClock(sectionItem.end)}`}
+            >
+              <span class="block">{sectionItem.label}</span>
+              <span class="block opacity-70 text-[0.46rem] mt-0.5">
+                {formatClock(sectionItem.start)}
+              </span>
+            </button>
+          {/each}
+        {:else}
+          <div class="px-2 py-1 text-[0.52rem] uppercase tracking-wider text-surface-500">
+            No detected sections
+          </div>
+        {/if}
       </div>
 
       <div
@@ -1050,12 +1151,12 @@
 
       <div class="flex bg-surface-950 rounded-sm border border-surface-800 overflow-hidden font-mono">
         <span class="px-2 py-0.5 text-[0.52rem] text-surface-300 border-r border-surface-800">
-          SPD {(0.5 + effectiveSpeedAutomationValue * 1.6).toFixed(2)}x{speedLaneActive
+          SPD {currentSpeedRate.toFixed(2)}x{speedLaneActive
             ? ""
             : " M"}
         </span>
         <span class="px-2 py-0.5 text-[0.52rem] text-surface-300">
-          STT {(effectiveStutterAutomationValue * 100).toFixed(0)}%{stutterLaneActive
+          STT {(currentStutterAmount * 100).toFixed(0)}%{stutterLaneActive
             ? ""
             : " M"}
         </span>
@@ -1082,18 +1183,23 @@
     on:wheel={handleTimelineWheel}
     class="flex-1 flex flex-col relative bg-surface-950 border border-surface-800 rounded-sm min-h-0 overflow-hidden text-[0.6rem] font-mono select-none"
   >
-    <div class="absolute inset-0 z-10 pointer-events-none">
+    <div
+      class="absolute top-0 bottom-0 right-0 z-10 pointer-events-none"
+      style={`left:${laneLabelWidthPx}px`}
+    >
       <div
         class="absolute top-0 bottom-0 border-l-2 border-primary-500 shadow-[0_0_14px_rgba(245,158,11,0.75)] z-30"
         style={`left:${playheadPosition}%`}
       >
         <div
-          class="absolute top-0 -ml-[18px] px-1.5 h-4 flex items-center rounded-[2px] border border-primary-300 bg-primary-500 text-surface-950 text-[0.52rem] font-bold"
+          class="absolute top-0 px-1.5 h-4 flex items-center rounded-[2px] border border-primary-300 bg-primary-500 text-surface-950 text-[0.52rem] font-bold"
+          style={`margin-left:${playheadLabelOffsetPx}px`}
         >
           {formatClockWithCentis(currentTime)}
         </div>
         <div
-          class="absolute top-4 -ml-[5px] w-[11px] h-2 bg-primary-500 clip-path-[polygon(0_0,100%_0,50%_100%)]"
+          class="absolute top-4 w-[11px] h-2 bg-primary-500 clip-path-[polygon(0_0,100%_0,50%_100%)]"
+          style={`margin-left:${playheadNibOffsetPx}px`}
         ></div>
         <div
           class="absolute bottom-0 -ml-[3px] w-[7px] h-[7px] rounded-full bg-primary-300 shadow-[0_0_10px_rgba(245,158,11,0.85)]"
@@ -1140,69 +1246,12 @@
       value={scrubValue}
       on:input={scrub}
       on:keydown={handleTimelineKeydown}
-      class="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-30 m-0"
+      class="absolute top-0 bottom-0 right-0 w-auto h-full opacity-0 cursor-ew-resize z-30 m-0"
+      style={`left:${laneLabelWidthPx}px`}
     />
 
     <div
-      class="basis-[22%] min-h-0 flex border-b border-surface-800 items-stretch bg-surface-900 group relative {clipLaneActive
-        ? ''
-        : 'opacity-45'}"
-    >
-      <div
-        class="w-[110px] flex-none bg-surface-900 border-r border-surface-800 flex flex-col justify-center gap-1 px-2 z-20"
-      >
-        <span
-          class="text-[0.6rem] text-surface-300 uppercase font-bold tracking-widest text-primary-300/80"
-          >V1 Clips</span
-        >
-        <div class="flex gap-1">
-          <button
-            class="h-4 w-4 rounded-[2px] text-[0.5rem] font-black border {laneSoloState ===
-            'clips'
-              ? 'border-primary-500 text-primary-300 bg-primary-500/15'
-              : 'border-surface-700 text-surface-500 hover:bg-surface-800'}"
-            aria-label="Solo clips lane"
-            aria-pressed={laneSoloState === "clips"}
-            on:click={() => toggleLaneSolo("clips")}>S</button
-          >
-          <button
-            class="h-4 w-4 rounded-[2px] text-[0.5rem] font-black border {laneMuteState.clips
-              ? 'border-error-500 text-error-400 bg-error-500/10'
-              : 'border-surface-700 text-surface-500 hover:bg-surface-800'}"
-            aria-label="Mute clips lane"
-            aria-pressed={laneMuteState.clips}
-            on:click={() => toggleLaneMute("clips")}>M</button
-          >
-        </div>
-      </div>
-      <div class="flex-1 relative overflow-hidden bg-surface-950">
-        <div class="absolute inset-y-1 mx-2 flex gap-1">
-          <div
-            class="h-full w-24 bg-surface-800 border border-surface-700 rounded-sm overflow-hidden flex items-center justify-center opacity-70"
-          >
-            <span class="text-[0.5rem] text-surface-500">CLIP_A</span>
-          </div>
-          <div
-            class="h-full w-12 bg-surface-800 border-l border-r border-surface-700 border-t-2 border-t-primary-500 overflow-hidden flex items-center justify-center bg-primary-500/10"
-          >
-            <span class="text-[0.5rem] text-primary-400">CUT</span>
-          </div>
-          <div
-            class="h-full w-32 bg-surface-800 border border-surface-700 rounded-sm overflow-hidden flex items-center justify-center opacity-70"
-          >
-            <span class="text-[0.5rem] text-surface-500">CLIP_B</span>
-          </div>
-          <div
-            class="h-full w-16 bg-surface-800 border border-surface-700 rounded-sm overflow-hidden flex items-center justify-center opacity-70"
-          >
-            <span class="text-[0.5rem] text-surface-500">CHORUS</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div
-      class="basis-[34%] min-h-0 flex border-b border-surface-800 items-stretch bg-surface-900 group {waveformLaneActive
+      class="flex-[2_2_0%] min-h-0 flex border-b border-surface-800 items-stretch bg-surface-900 group {waveformLaneActive
         ? ''
         : 'opacity-45'}"
     >
@@ -1241,13 +1290,11 @@
         <div
           class="absolute inset-x-0 top-1/2 h-[1px] bg-primary-300/25 -translate-y-1/2 pointer-events-none z-0"
         ></div>
-        <div
-          class="absolute inset-0 flex items-center justify-center px-2 z-10 opacity-95"
-        >
+        <div class="absolute inset-0 flex items-center justify-center z-10 opacity-95">
           <svg
             preserveAspectRatio="none"
             viewBox="0 0 1000 100"
-            class="w-full h-[92%]"
+            class="w-full h-[92%] block"
             aria-hidden="true"
           >
             <defs>
@@ -1296,7 +1343,7 @@
       </div>
     </div>
 
-    <div class="basis-[22%] min-h-0 flex border-b border-surface-800 items-stretch bg-surface-900 {stutterLaneActive
+    <div class="flex-[1_1_0%] min-h-0 flex border-b border-surface-800 items-stretch bg-surface-900 {stutterLaneActive
       ? ''
       : 'opacity-45'}">
       <div
@@ -1327,7 +1374,7 @@
           >
         </div>
       </div>
-      <div class="flex-1 relative overflow-hidden bg-surface-950 px-2" bind:this={stutterEditorEl}>
+      <div class="flex-1 relative overflow-hidden bg-surface-950" bind:this={stutterEditorEl}>
         <div class="absolute top-1 right-1 z-20 flex gap-1 items-center">
           <select
             bind:value={stutterPresetId}
@@ -1398,7 +1445,7 @@
       </div>
     </div>
 
-    <div class="basis-[22%] min-h-0 flex items-stretch bg-surface-900 {speedLaneActive
+    <div class="flex-[1_1_0%] min-h-0 flex items-stretch bg-surface-900 {speedLaneActive
       ? ''
       : 'opacity-45'}">
       <div
@@ -1429,7 +1476,7 @@
           >
         </div>
       </div>
-      <div class="flex-1 relative overflow-hidden bg-surface-950 px-2" bind:this={speedEditorEl}>
+      <div class="flex-1 relative overflow-hidden bg-surface-950" bind:this={speedEditorEl}>
         <div class="absolute top-1 right-1 z-20 flex gap-1 items-center">
           <select
             bind:value={speedPresetId}

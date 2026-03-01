@@ -24,6 +24,55 @@ export interface EssentiaStructureResponse {
   boundaries: number[];
 }
 
+export interface EssentiaClassificationResult {
+  label: string;
+  confidence: number;
+  all_scores?: Record<string, number>;
+}
+
+export interface EssentiaClassificationFeature {
+  label: string;
+  confidence: number;
+}
+
+export interface EssentiaClassificationResponse {
+  genres: EssentiaClassificationResult | null;
+  moods: EssentiaClassificationResult | null;
+  tags: string[] | null;
+  danceability: EssentiaClassificationFeature | null;
+  approachability: EssentiaClassificationFeature | null;
+  engagement: EssentiaClassificationFeature | null;
+  acoustic_electronic: EssentiaClassificationFeature | null;
+  bright_dark: EssentiaClassificationFeature | null;
+  instrument: EssentiaClassificationFeature | null;
+  tonal_atonal: EssentiaClassificationFeature | null;
+}
+
+export interface EssentiaPitchData {
+  mean_frequency: number;
+  confidence: number;
+}
+
+export interface EssentiaTonalResponse {
+  key: string;
+  scale: string;
+  strength: number;
+  tempo_cnn: number | null;
+  pitch: EssentiaPitchData | null;
+}
+
+export interface EssentiaVocalResponse {
+  vocal_presence: number;
+  label: string;
+}
+
+export interface EssentiaFullResponse extends EssentiaRhythmResponse {
+  structure: EssentiaStructureResponse;
+  classification: EssentiaClassificationResponse | null;
+  tonal: EssentiaTonalResponse | null;
+  vocals: EssentiaVocalResponse | null;
+}
+
 const getBaseUrl = (): string => (import.meta.env.VITE_ESSENTIA_API_BASE_URL ?? 'https://essentia.v1su4.dev').replace(/\/+$/, '');
 
 const postAudioForm = async <T>(path: string, file: File, apiKey: string): Promise<T> => {
@@ -51,3 +100,6 @@ export const analyzeEssentiaRhythm = (file: File, apiKey: string): Promise<Essen
 
 export const analyzeEssentiaStructure = (file: File, apiKey: string): Promise<EssentiaStructureResponse> =>
   postAudioForm<EssentiaStructureResponse>('/analyze/structure', file, apiKey);
+
+export const analyzeEssentiaFull = (file: File, apiKey: string): Promise<EssentiaFullResponse> =>
+  postAudioForm<EssentiaFullResponse>('/analyze/full', file, apiKey);

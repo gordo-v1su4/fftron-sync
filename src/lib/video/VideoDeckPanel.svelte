@@ -2,6 +2,7 @@
   import { onDestroy } from "svelte";
   import {
     activeSection,
+    automationBounds,
     automationRuntime,
     audioBands,
     reactiveEnvelope,
@@ -33,7 +34,10 @@
   let status = "Drop or upload clips to begin playback.";
   let envelopeGateEnabled = true;
   let speedRampEnabled = true;
+  let switchSkipChancePercent = 0;
   let currentPlaybackRate = 1;
+  let currentAutomationRate = 1;
+  let currentAutomationStutter = 0;
   let lastStutterPulseMs = 0;
   let lastQuantizeSlot = -1;
   let playbackRafId = 0;
@@ -43,6 +47,15 @@
   let uploadLane = 0;
   let laneMuted = [false, false, false];
   let soloLane: number | null = null;
+  const speedDomainMin = 0.25;
+  const speedDomainMax = 4;
+  const mapNormalizedToRange = (
+    normalized: number,
+    min: number,
+    max: number,
+  ): number => min + Math.max(0, Math.min(1, normalized)) * (max - min);
+  const clamp = (value: number, min: number, max: number): number =>
+    Math.max(min, Math.min(max, value));
 
   const makeId = (): string =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -188,12 +201,23 @@
         !envelopeGateEnabled ||
         $audioBands.envelopeA > $reactiveEnvelope.threshold;
       if (lastQuantizeSlot >= 0 && gateOpen) {
-        queueQuantizedSwitch(slotIndex);
+        const skipChance = clamp(switchSkipChancePercent, 0, 100) / 100;
+        if (skipChance > 0 && Math.random() < skipChance) {
+          status = `Quantized ${quantizeMode} switch bypassed (${Math.round(skipChance * 100)}%)`;
+        } else {
+          queueQuantizedSwitch(slotIndex);
+        }
       } else if (lastQuantizeSlot >= 0 && !gateOpen) {
         status = `Gate closed: EnvA <= Thr`;
       }
       lastQuantizeSlot = slotIndex;
     }
+  };
+
+  const applySwitchSkipChance = () => {
+    switchSkipChancePercent = Number(
+      clamp(Number(switchSkipChancePercent) || 0, 0, 100).toFixed(0),
+    );
   };
 
   const toggleEnvelopeGate = () => {
@@ -203,23 +227,56 @@
   const applySpeedRamp = () => {
     if (!player || player.paused) return;
     const envelope = Math.max(0, Math.min(1, $audioBands.envelopeB));
-    const automationSpeed = Math.max(0, Math.min(1, $automationRuntime.speed));
-    const automationStutter = Math.max(0, Math.min(1, $automationRuntime.stutter));
+    const automationSpeedNorm = Math.max(
+      0,
+      Math.min(1, $automationRuntime.speed),
+    );
+    const automationStutterNorm = Math.max(
+      0,
+      Math.min(1, $automationRuntime.stutter),
+    );
+    const speedMinBound = Math.max(
+      speedDomainMin,
+      Math.min($automationBounds.speedMin, $automationBounds.speedMax - 0.01),
+    );
+    const speedMaxBound = Math.min(
+      speedDomainMax,
+      Math.max($automationBounds.speedMax, speedMinBound + 0.01),
+    );
+    const stutterMinBound = Math.max(
+      0,
+      Math.min($automationBounds.stutterMin, $automationBounds.stutterMax - 0.001),
+    );
+    const stutterMaxBound = Math.min(
+      1,
+      Math.max($automationBounds.stutterMax, stutterMinBound + 0.001),
+    );
     const rampDepth = quantizeMode === "bar" ? 0.45 : 0.28;
-    const automationRate = 0.45 + automationSpeed * 1.75;
+    const automationRate = mapNormalizedToRange(
+      automationSpeedNorm,
+      speedMinBound,
+      speedMaxBound,
+    );
+    const automationStutterAmount = mapNormalizedToRange(
+      automationStutterNorm,
+      stutterMinBound,
+      stutterMaxBound,
+    );
+    currentAutomationRate = automationRate;
+    currentAutomationStutter = automationStutterAmount;
     const envelopeRate =
       1 + (envelope - 0.5) * 2 * rampDepth;
     const targetRate = speedRampEnabled
-      ? Math.max(0.35, Math.min(2.5, automationRate * envelopeRate))
+      ? Math.max(speedDomainMin, Math.min(speedDomainMax, automationRate * envelopeRate))
       : 1;
     currentPlaybackRate = targetRate;
     player.playbackRate = targetRate;
 
-    if (speedRampEnabled && automationStutter > 0.72) {
+    if (speedRampEnabled && automationStutterAmount > 0.72) {
       const now = Date.now();
-      const pulseEveryMs = Math.max(55, 185 - automationStutter * 120);
+      const pulseEveryMs = Math.max(55, 185 - automationStutterAmount * 120);
       if (now - lastStutterPulseMs >= pulseEveryMs && player.currentTime > 0.06) {
-        const jumpBack = 0.012 + automationStutter * 0.065;
+        const jumpBack = 0.012 + automationStutterAmount * 0.065;
         player.currentTime = Math.max(0, player.currentTime - jumpBack);
         lastStutterPulseMs = now;
       }
@@ -482,8 +539,8 @@
           <span
             class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-surface-800 rounded-sm font-mono backdrop-blur-sm"
             >{$activeSection} · {currentPlaybackRate.toFixed(2)}x · S{
-              ($automationRuntime.speed * 100).toFixed(0)
-            } · T{($automationRuntime.stutter * 100).toFixed(0)}</span
+              currentAutomationRate.toFixed(2)
+            }x · T{(currentAutomationStutter * 100).toFixed(0)}%</span
           >
         </div>
 
@@ -576,6 +633,37 @@
             >
               RAMP {speedRampEnabled ? "ON" : "OFF"}
             </button>
+            <div
+              class="flex items-center gap-1 px-1 py-0.5 rounded-sm border border-surface-700 bg-surface-900"
+            >
+              <span class="text-[0.52rem] font-bold text-surface-400 uppercase"
+                >Skip</span
+              >
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                bind:value={switchSkipChancePercent}
+                on:input={applySwitchSkipChance}
+                class="w-16 h-1 accent-primary-500"
+                aria-label="Random quantized switch bypass probability"
+                title="Random quantized switch bypass probability"
+              />
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                bind:value={switchSkipChancePercent}
+                on:input={applySwitchSkipChance}
+                class="w-10 bg-surface-950 border border-surface-700 rounded-sm px-1 py-0 text-[0.52rem] font-mono text-surface-300 text-right"
+                aria-label="Skip chance percent"
+              />
+              <span class="text-[0.5rem] text-surface-500 font-mono">
+                {(switchSkipChancePercent / 100).toFixed(2)}
+              </span>
+            </div>
           </div>
         </div>
       </div>

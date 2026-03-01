@@ -5,6 +5,8 @@ export interface WaveformOverview {
   bitsPerSample: number;
   durationSeconds: number;
   peaks: number[];
+  minValues: number[];
+  maxValues: number[];
 }
 
 interface ParsedWavData {
@@ -139,12 +141,14 @@ export const extractWaveformOverview = (
     resolution?: number;
   },
 ): WaveformOverview => {
-  const { sourceName = 'WAV Track', resolution = 800 } = options ?? {};
+  const { sourceName = 'WAV Track', resolution = 2400 } = options ?? {};
   const wav = parseWav(buffer);
   const view = new DataView(buffer);
   const bucketCount = Math.max(4, Math.min(wav.frameCount, Math.floor(resolution)));
   const framesPerBucket = wav.frameCount / bucketCount;
   const peaks = new Array<number>(bucketCount).fill(0);
+  const minValues = new Array<number>(bucketCount).fill(0);
+  const maxValues = new Array<number>(bucketCount).fill(0);
   const bytesPerSample = wav.bitsPerSample / 8;
 
   for (let bucket = 0; bucket < bucketCount; bucket += 1) {
@@ -154,24 +158,29 @@ export const extractWaveformOverview = (
       Math.floor((bucket + 1) * framesPerBucket),
     );
     let bucketPeak = 0;
+    let bucketMin = 1;
+    let bucketMax = -1;
 
     for (let frame = frameStart; frame < frameEnd && frame < wav.frameCount; frame += 1) {
       const base = wav.dataOffset + frame * wav.blockAlign;
       for (let channel = 0; channel < wav.channelCount; channel += 1) {
         const sampleOffset = base + channel * bytesPerSample;
-        const sampleValue = Math.abs(
-          normalizePcmValue(
-            view,
-            sampleOffset,
-            wav.bitsPerSample,
-            wav.audioFormat,
-          ),
+        const sampleValue = normalizePcmValue(
+          view,
+          sampleOffset,
+          wav.bitsPerSample,
+          wav.audioFormat,
         );
-        if (sampleValue > bucketPeak) bucketPeak = sampleValue;
+        const magnitude = Math.abs(sampleValue);
+        if (magnitude > bucketPeak) bucketPeak = magnitude;
+        if (sampleValue < bucketMin) bucketMin = sampleValue;
+        if (sampleValue > bucketMax) bucketMax = sampleValue;
       }
     }
 
     peaks[bucket] = Math.min(1, bucketPeak);
+    minValues[bucket] = Math.max(-1, bucketMax < bucketMin ? 0 : bucketMin);
+    maxValues[bucket] = Math.min(1, bucketMax < bucketMin ? 0 : bucketMax);
   }
 
   return {
@@ -181,7 +190,67 @@ export const extractWaveformOverview = (
     bitsPerSample: wav.bitsPerSample,
     durationSeconds: wav.frameCount / wav.sampleRate,
     peaks,
+    minValues,
+    maxValues,
   };
+};
+
+const sampleSeriesAt = (series: readonly number[], norm: number): number => {
+  if (!series.length) return 0;
+  if (series.length === 1) return series[0] ?? 0;
+  const clampedNorm = Math.max(0, Math.min(1, norm));
+  const scaled = clampedNorm * (series.length - 1);
+  const index = Math.floor(scaled);
+  const frac = scaled - index;
+  const from = series[index] ?? 0;
+  const to = series[Math.min(index + 1, series.length - 1)] ?? from;
+  return from + (to - from) * frac;
+};
+
+export const buildWaveformViewportPath = (
+  minValues: readonly number[],
+  maxValues: readonly number[],
+  width = 1000,
+  height = 100,
+  viewportStart = 0,
+  viewportEnd = 1,
+  samples = 1400,
+): string => {
+  const midline = height / 2;
+  const halfHeight = Math.max(2, height / 2 - 2);
+
+  if (!minValues.length || !maxValues.length) {
+    return `M 0,${midline} L ${width},${midline} L ${width},${midline + 0.5} L 0,${midline + 0.5} Z`;
+  }
+
+  const start = Math.max(0, Math.min(1, viewportStart));
+  const end = Math.max(start + 0.0001, Math.min(1, viewportEnd));
+  const sampleCount = Math.max(64, Math.floor(samples));
+  const upper: number[] = [];
+  const lower: number[] = [];
+
+  for (let index = 0; index <= sampleCount; index += 1) {
+    const localNorm = index / sampleCount;
+    const globalNorm = start + (end - start) * localNorm;
+    const maxValue = Math.max(-1, Math.min(1, sampleSeriesAt(maxValues, globalNorm)));
+    const minValue = Math.max(-1, Math.min(1, sampleSeriesAt(minValues, globalNorm)));
+    const yA = midline - maxValue * halfHeight;
+    const yB = midline - minValue * halfHeight;
+    upper.push(Math.min(yA, yB));
+    lower.push(Math.max(yA, yB));
+  }
+
+  let path = `M 0,${upper[0]} `;
+  for (let index = 0; index <= sampleCount; index += 1) {
+    const x = (index / sampleCount) * width;
+    path += `L ${x},${upper[index]} `;
+  }
+  for (let index = sampleCount; index >= 0; index -= 1) {
+    const x = (index / sampleCount) * width;
+    path += `L ${x},${lower[index]} `;
+  }
+  path += "Z";
+  return path;
 };
 
 export const buildWaveformPath = (
@@ -199,14 +268,14 @@ export const buildWaveformPath = (
 
   for (let index = 0; index < peaks.length; index += 1) {
     const x = (index / Math.max(1, peaks.length - 1)) * width;
-    const clamped = Math.max(0.02, Math.min(1, peaks[index] || 0));
+    const clamped = Math.max(0, Math.min(1, peaks[index] || 0));
     const y = midline - clamped * halfHeight;
     path += `L ${x},${y} `;
   }
 
   for (let index = peaks.length - 1; index >= 0; index -= 1) {
     const x = (index / Math.max(1, peaks.length - 1)) * width;
-    const clamped = Math.max(0.02, Math.min(1, peaks[index] || 0));
+    const clamped = Math.max(0, Math.min(1, peaks[index] || 0));
     const y = midline + clamped * halfHeight;
     path += `L ${x},${y} `;
   }

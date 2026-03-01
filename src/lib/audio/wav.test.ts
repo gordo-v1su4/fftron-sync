@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildWaveformPath,
+  buildWaveformViewportPath,
   extractWaveformOverview,
   isLikelyWavFile,
 } from './wav';
@@ -60,15 +61,33 @@ describe('wav utilities', () => {
     expect(overview.bitsPerSample).toBe(16);
     expect(overview.durationSeconds).toBe(1);
     expect(overview.peaks).toHaveLength(4);
+    expect(overview.minValues).toHaveLength(4);
+    expect(overview.maxValues).toHaveLength(4);
     expect(overview.peaks[0]).toBeCloseTo(0.25, 3);
     expect(overview.peaks[1]).toBeCloseTo(0.75, 3);
     expect(overview.peaks[2]).toBeCloseTo(1, 3);
     expect(overview.peaks[3]).toBeCloseTo(0.25, 3);
+    expect(overview.minValues[0]).toBeCloseTo(0, 3);
+    expect(overview.maxValues[2]).toBeCloseTo(1, 3);
   });
 
   it('builds a closed SVG path for waveform rendering', () => {
     const path = buildWaveformPath([0.2, 0.6, 0.8], 100, 40);
     expect(path.startsWith('M 0,20')).toBe(true);
+    expect(path.endsWith('Z')).toBe(true);
+  });
+
+  it('builds a viewport waveform path from min/max envelopes', () => {
+    const path = buildWaveformViewportPath(
+      [-0.2, -0.7, -0.3],
+      [0.3, 0.9, 0.4],
+      120,
+      50,
+      0,
+      1,
+      64,
+    );
+    expect(path.startsWith('M 0,')).toBe(true);
     expect(path.endsWith('Z')).toBe(true);
   });
 

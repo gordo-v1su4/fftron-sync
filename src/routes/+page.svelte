@@ -4,7 +4,11 @@
   import TransportControlPanel from "$lib/engine/TransportControlPanel.svelte";
   import VideoDeckPanel from "$lib/video/VideoDeckPanel.svelte";
   import TimelinePanel from "$lib/timeline/TimelinePanel.svelte";
-  import { audioRuntime, timelineSeekRequest } from "$lib/stores/runtime";
+  import {
+    audioRuntime,
+    timelineSeekRequest,
+    waveformOverview,
+  } from "$lib/stores/runtime";
 
   let duration = 0;
   let currentTime = 0;
@@ -22,13 +26,20 @@
     });
   };
 
-  $: timelineDuration = Math.max(duration, $audioRuntime.duration);
+  const clamp = (value: number, min: number, max: number): number =>
+    Math.max(min, Math.min(max, value));
+
+  $: hasSongLoaded =
+    $audioRuntime.source === "file" &&
+    $audioRuntime.trackName !== "No track loaded";
+  $: audioWaveformDuration = $waveformOverview?.durationSeconds ?? 0;
+  $: timelineDuration = hasSongLoaded
+    ? Math.max($audioRuntime.duration, audioWaveformDuration, 0.001)
+    : Math.max(duration, 0.001);
   $: timelineCurrentTime =
-    $audioRuntime.source === "file" && $audioRuntime.isPlaying
-      ? $audioRuntime.currentTime
-      : duration > 0
-        ? currentTime
-        : $audioRuntime.currentTime;
+    hasSongLoaded
+      ? clamp($audioRuntime.currentTime, 0, timelineDuration)
+      : clamp(currentTime, 0, timelineDuration);
 </script>
 
 <div
