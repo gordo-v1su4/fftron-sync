@@ -4,21 +4,32 @@
     activeSection,
     audioBands,
     audioRuntime,
+    detectedTempo,
+    essentiaAnalysis,
     markers,
     reactiveEnvelope,
     tempoState,
+    timelineSeekRequest,
+    waveformOverview,
   } from "$lib/stores/runtime";
   import {
     analyzeEssentiaRhythm,
     analyzeEssentiaStructure,
+    type EssentiaStructureSection,
   } from "$lib/services/essentia";
+  import {
+    extractWaveformOverview,
+    isLikelyWavFile,
+  } from "$lib/audio/wav";
   import type { EngineCueMarker } from "$lib/types/timeline";
   import type { ReactiveBandTarget } from "$lib/types/engine";
 
   const targets: ReactiveBandTarget[] = ["low", "mid", "high", "full"];
   const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
+  const importEnv = import.meta.env as Record<string, string | undefined>;
   const defaultEssentiaApiKey =
-    (import.meta.env.VITE_ESSENTIA_API_KEY as string | undefined)?.trim() ?? "";
+    (importEnv.VITE_ESSENTIA_API_KEY ?? importEnv.ESSENTIA_API_KEY ?? "").trim();
+  const waveformResolution = 720;
 
   let audioElement: HTMLAudioElement | null = null;
   let fileInput: HTMLInputElement | null = null;
@@ -36,6 +47,7 @@
   let status = "Load a song (or mic) to drive FFT and envelopes.";
   let essentiaApiKey = "";
   let essentiaLoading = false;
+  let detectionRequestId = 0;
 
   let target: ReactiveBandTarget = "full";
   let attackMs = 27;
@@ -45,6 +57,7 @@
 
   let envelopeA = 0;
   let envelopeB = 0;
+  let lastHandledSeekRequestId = 0;
 
   const normalizeSectionLabel = (label: string): string => {
     const clean = label
@@ -55,23 +68,32 @@
   };
 
   const compileSectionMarkers = (
-    sections: Array<{ start: number; label: string }>,
+    sections: EssentiaStructureSection[],
     bpm: number,
   ): EngineCueMarker[] => {
     const beatsPerSecond = Math.max(20, Math.min(300, bpm)) / 60;
+    const sectionCounts = new Map<string, number>();
     return sections.map((section, index) => {
       const totalBeats = Math.max(0, section.start * beatsPerSecond);
       const bar = Math.floor(totalBeats / 4) + 1;
       const beat = (Math.floor(totalBeats) % 4) + 1;
+      const baseSection = normalizeSectionLabel(section.label || `section-${index + 1}`);
+      const occurrence = (sectionCounts.get(baseSection) ?? 0) + 1;
+      sectionCounts.set(baseSection, occurrence);
+      const sectionId = occurrence === 1 ? baseSection : `${baseSection}-${occurrence}`;
       return {
         id: `ess-${index + 1}`,
-        section: normalizeSectionLabel(section.label || `section-${index + 1}`),
+        section: sectionId,
         bar,
         beat,
         quantize: "1n",
         action: "trigger_clip",
         payload: {
           start: section.start,
+          end: section.end,
+          duration: section.duration,
+          energy: section.energy,
+          label: section.label,
           source: "essentia",
         },
       };
@@ -261,6 +283,31 @@
         envelopeB,
         peak: envelopeA > 0.82 || high > 0.9,
       });
+
+      // Drive transport/timeline from the real media clock each frame.
+      if (audioElement && $audioRuntime.source === "file") {
+        const nextCurrentTime = audioElement.currentTime || 0;
+        const nextDuration = Number.isFinite(audioElement.duration)
+          ? audioElement.duration
+          : $audioRuntime.duration;
+        const nextIsPlaying = !audioElement.paused && !audioElement.ended;
+
+        audioRuntime.update((state) => {
+          const currentTimeChanged =
+            Math.abs(state.currentTime - nextCurrentTime) > 0.001;
+          const durationChanged = Math.abs(state.duration - nextDuration) > 0.001;
+          const playingChanged = state.isPlaying !== nextIsPlaying;
+          if (!currentTimeChanged && !durationChanged && !playingChanged) {
+            return state;
+          }
+          return {
+            ...state,
+            currentTime: nextCurrentTime,
+            duration: nextDuration,
+            isPlaying: nextIsPlaying,
+          };
+        });
+      }
     };
 
     rafId = requestAnimationFrame(frame);
@@ -289,8 +336,38 @@
       currentTime: 0,
       duration: 0,
     });
+    essentiaAnalysis.set({
+      bpm: null,
+      confidence: null,
+      duration: null,
+      boundaries: [],
+      sections: [],
+      energyCurve: [],
+      updatedAtMs: null,
+    });
 
-    status = `Loaded track: ${file.name}`;
+    if (isLikelyWavFile(file.name, file.type)) {
+      try {
+        const waveform = extractWaveformOverview(await file.arrayBuffer(), {
+          sourceName: file.name,
+          resolution: waveformResolution,
+        });
+        waveformOverview.set(waveform);
+        status = `Loaded ${file.name} (${waveform.channelCount}ch ${waveform.sampleRate}Hz WAV)`;
+      } catch (error) {
+        waveformOverview.set(null);
+        status = `Loaded ${file.name}, but WAV analysis failed: ${error instanceof Error ? error.message : "unknown error"}`;
+      }
+    } else {
+      waveformOverview.set(null);
+      status = `Loaded track: ${file.name}`;
+    }
+
+    if (defaultEssentiaApiKey || essentiaApiKey.trim()) {
+      void runEssentiaDetection(file);
+    } else {
+      status = `${status} (Essentia key not configured in env)`;
+    }
   };
 
   const playTrack = async () => {
@@ -348,22 +425,26 @@
     }
   };
 
-  const runEssentiaDetection = async () => {
-    if (!loadedMediaFile) {
+  const runEssentiaDetection = async (fileOverride?: File) => {
+    const file = fileOverride ?? loadedMediaFile;
+    if (!file) {
       status = "Load an audio/video file before Essentia detection.";
       return;
     }
-    if (!essentiaApiKey.trim()) {
-      status = "Add an Essentia API key to run BPM/section detection.";
+    const apiKey = (essentiaApiKey.trim() || defaultEssentiaApiKey).trim();
+    if (!apiKey) {
+      status = "Set VITE_ESSENTIA_API_KEY in environment to run BPM/section detection.";
       return;
     }
 
+    const requestId = ++detectionRequestId;
     essentiaLoading = true;
     try {
       const [rhythm, structure] = await Promise.all([
-        analyzeEssentiaRhythm(loadedMediaFile, essentiaApiKey.trim()),
-        analyzeEssentiaStructure(loadedMediaFile, essentiaApiKey.trim()),
+        analyzeEssentiaRhythm(file, apiKey),
+        analyzeEssentiaStructure(file, apiKey),
       ]);
+      if (requestId !== detectionRequestId) return;
 
       const markersFromSections = compileSectionMarkers(
         structure.sections,
@@ -374,34 +455,79 @@
         activeSection.set(markersFromSections[0].section);
 
       const firstBeatSeconds = rhythm.beats[0] ?? 0;
+      const normalizedConfidence = clamp01(rhythm.confidence);
       tempoState.update((state) => ({
         ...state,
         bpm: rhythm.bpm,
-        confidence: rhythm.confidence,
+        confidence: normalizedConfidence,
         source: "auto",
         downbeatEpochMs: Date.now() - firstBeatSeconds * 1000,
       }));
+      detectedTempo.set({
+        bpm: rhythm.bpm,
+        confidence: normalizedConfidence,
+        source: "essentia",
+        updatedAtMs: Date.now(),
+      });
+      const sectionCounts = new Map<string, number>();
+      essentiaAnalysis.set({
+        bpm: rhythm.bpm,
+        confidence: normalizedConfidence,
+        duration: rhythm.duration,
+        boundaries: structure.boundaries,
+        sections: structure.sections.map((section, index) => {
+          const baseSection = normalizeSectionLabel(
+            section.label || `section-${index + 1}`,
+          );
+          const occurrence = (sectionCounts.get(baseSection) ?? 0) + 1;
+          sectionCounts.set(baseSection, occurrence);
+          return {
+            id: `sec-${index + 1}`,
+            label: section.label || baseSection,
+            section:
+              occurrence === 1 ? baseSection : `${baseSection}-${occurrence}`,
+            start: Math.max(0, section.start),
+            end: Math.max(section.start, section.end),
+            duration: section.duration,
+            energy: section.energy,
+          };
+        }),
+        energyCurve: rhythm.energy.curve ?? [],
+        updatedAtMs: Date.now(),
+      });
 
-      status = `Essentia detected BPM ${rhythm.bpm.toFixed(2)} (${(rhythm.confidence * 100).toFixed(0)}%) and ${markersFromSections.length} sections`;
+      status = `Essentia detected BPM ${rhythm.bpm.toFixed(2)} (${(normalizedConfidence * 100).toFixed(0)}%) and ${markersFromSections.length} sections`;
     } catch (error) {
       status = `Essentia detection failed: ${error instanceof Error ? error.message : "unknown error"}`;
     } finally {
-      essentiaLoading = false;
+      if (requestId === detectionRequestId) {
+        essentiaLoading = false;
+      }
     }
   };
 
   onMount(() => {
     applyEnvelopeSettings();
     startFftLoop();
-    if (typeof window !== "undefined") {
-      const storedKey =
-        window.localStorage.getItem("essentia_api_key")?.trim() ?? "";
-      essentiaApiKey = storedKey || defaultEssentiaApiKey;
-    }
+    essentiaApiKey = defaultEssentiaApiKey;
   });
 
-  $: if (typeof window !== "undefined") {
-    window.localStorage.setItem("essentia_api_key", essentiaApiKey);
+  $: if (
+    $timelineSeekRequest &&
+    $timelineSeekRequest.requestId !== lastHandledSeekRequestId
+  ) {
+    lastHandledSeekRequestId = $timelineSeekRequest.requestId;
+    if (audioElement && $audioRuntime.source === "file") {
+      const seekMax = Number.isFinite(audioElement.duration)
+        ? audioElement.duration
+        : $audioRuntime.duration;
+      const seekTime = Math.max(0, Math.min($timelineSeekRequest.time, seekMax));
+      audioElement.currentTime = seekTime;
+      audioRuntime.update((state) => ({
+        ...state,
+        currentTime: seekTime,
+      }));
+    }
   }
 
   onDestroy(() => {
@@ -412,6 +538,16 @@
     analyser?.disconnect();
     monitorGain?.disconnect();
     if (context) void context.close();
+    waveformOverview.set(null);
+    essentiaAnalysis.set({
+      bpm: null,
+      confidence: null,
+      duration: null,
+      boundaries: [],
+      sections: [],
+      energyCurve: [],
+      updatedAtMs: null,
+    });
   });
 </script>
 
@@ -426,7 +562,9 @@
     >
       Audio Reactive Analyzer
     </h2>
-    <p class="text-[0.6rem] m-0 truncate text-primary-500">{status}</p>
+    <p class="text-[0.6rem] m-0 truncate text-primary-500" aria-live="polite">
+      {status}
+    </p>
   </div>
 
   <div class="flex flex-row gap-1 flex-1 min-h-0">
@@ -457,23 +595,31 @@
       <div
         class="flex flex-wrap gap-1 items-center bg-surface-950 p-1 border border-surface-800 rounded-sm"
       >
-        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
-          >Essentia Key</label
+        <span class="text-surface-500 uppercase font-bold text-[0.55rem]"
+          >Essentia Auto</span
         >
-        <input
-          type="password"
-          bind:value={essentiaApiKey}
-          placeholder="X-API-Key"
-          autocomplete="off"
-          spellcheck="false"
-          class="flex-1 bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm"
-        />
+        <span class="text-[0.55rem] text-surface-300 font-mono"
+          >{defaultEssentiaApiKey ? "Key from env" : "No env key"}</span
+        >
         <button
           class="bg-primary-500/20 text-primary-500 border border-primary-500 hover:bg-primary-500 hover:text-surface-950 px-1.5 py-0.5 rounded-sm font-bold"
-          disabled={essentiaLoading}
-          on:click={runEssentiaDetection}
-          >{essentiaLoading ? "Detecting…" : "Detect BPM+Sections"}</button
+          disabled={essentiaLoading || !loadedMediaFile}
+          on:click={() => void runEssentiaDetection()}
+          >{essentiaLoading ? "Detecting…" : "Re-Detect BPM+Sections"}</button
         >
+      </div>
+
+      <div
+        class="flex items-center justify-between gap-2 bg-emerald-500/10 border border-emerald-500/60 rounded-sm px-1.5 py-0.5 font-mono text-[0.6rem]"
+      >
+        <span class="uppercase text-emerald-300 font-bold tracking-wide"
+          >BPM Detected</span
+        >
+        <span class="text-emerald-200">
+          {$detectedTempo.bpm !== null
+            ? `${$detectedTempo.bpm.toFixed(2)} (${(($detectedTempo.confidence ?? 0) * 100).toFixed(0)}%)`
+            : "Waiting for detection"}
+        </span>
       </div>
 
       <div
@@ -491,14 +637,17 @@
         >
         <button
           class="bg-surface-800 border border-surface-700 hover:bg-surface-700 px-1.5 py-0.5 rounded-sm"
+          aria-label="Play audio track"
           on:click={playTrack}>▶</button
         >
         <button
           class="bg-surface-800 border border-surface-700 hover:bg-surface-700 px-1.5 py-0.5 rounded-sm"
+          aria-label="Pause audio track"
           on:click={pauseTrack}>⏸</button
         >
         <button
           class="bg-surface-800 border border-surface-700 hover:bg-surface-700 px-1.5 py-0.5 rounded-sm"
+          aria-label="Stop audio track"
           on:click={stopTrack}>⏹</button
         >
         <span class="text-surface-400 ml-auto"
@@ -512,10 +661,13 @@
       <div
         class="grid grid-cols-[auto_1fr_auto_40px_auto_40px] items-center gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm"
       >
-        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+        <label
+          for="reactive-target"
+          class="text-surface-500 uppercase font-bold text-[0.55rem]"
           >Node</label
         >
         <select
+          id="reactive-target"
           bind:value={target}
           on:change={applyEnvelopeSettings}
           class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm outline-none"
@@ -524,10 +676,13 @@
             <option value={option}>{option}</option>
           {/each}
         </select>
-        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+        <label
+          for="reactive-attack"
+          class="text-surface-500 uppercase font-bold text-[0.55rem]"
           >Attk</label
         >
         <input
+          id="reactive-attack"
           type="number"
           min="5"
           max="800"
@@ -536,10 +691,13 @@
           on:input={applyEnvelopeSettings}
           class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
         />
-        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+        <label
+          for="reactive-release"
+          class="text-surface-500 uppercase font-bold text-[0.55rem]"
           >Rel</label
         >
         <input
+          id="reactive-release"
           type="number"
           min="20"
           max="1500"
@@ -553,10 +711,13 @@
       <div
         class="grid grid-cols-[auto_1fr_auto_1fr] items-center gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm"
       >
-        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+        <label
+          for="reactive-threshold"
+          class="text-surface-500 uppercase font-bold text-[0.55rem]"
           >Thr</label
         >
         <input
+          id="reactive-threshold"
           type="range"
           min="0"
           max="0.8"
@@ -565,10 +726,13 @@
           on:input={applyEnvelopeSettings}
           class="accent-primary-500 h-1 bg-surface-800 rounded-sm appearance-none outline-none"
         />
-        <label class="text-surface-500 uppercase font-bold text-[0.55rem]"
+        <label
+          for="reactive-sensitivity"
+          class="text-surface-500 uppercase font-bold text-[0.55rem]"
           >Sens</label
         >
         <input
+          id="reactive-sensitivity"
           type="range"
           min="0.5"
           max="2.5"

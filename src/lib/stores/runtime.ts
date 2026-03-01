@@ -2,12 +2,44 @@ import { writable } from 'svelte/store';
 import type {
   AudioBandState,
   AudioRuntimeState,
+  DetectedTempoState,
   ReactiveEnvelopeState,
   RuntimeCapabilities,
   ScheduledAction,
   TempoState
 } from '$lib/types/engine';
 import type { EngineCueMarker } from '$lib/types/timeline';
+import type { WaveformOverview } from '$lib/audio/wav';
+
+export interface TimelineSeekRequest {
+  time: number;
+  requestId: number;
+}
+
+export interface EssentiaDetectedSection {
+  id: string;
+  label: string;
+  section: string;
+  start: number;
+  end: number;
+  duration: number;
+  energy: number;
+}
+
+export interface EssentiaAnalysisState {
+  bpm: number | null;
+  confidence: number | null;
+  duration: number | null;
+  boundaries: number[];
+  sections: EssentiaDetectedSection[];
+  energyCurve: number[];
+  updatedAtMs: number | null;
+}
+
+export interface AutomationRuntimeState {
+  speed: number;
+  stutter: number;
+}
 
 export const runtimeCapabilities = writable<RuntimeCapabilities>({
   webgl2: true,
@@ -25,6 +57,13 @@ export const tempoState = writable<TempoState>({
   downbeatEpochMs: Date.now(),
   source: 'manual',
   tapCount: 0
+});
+
+export const detectedTempo = writable<DetectedTempoState>({
+  bpm: null,
+  confidence: null,
+  source: null,
+  updatedAtMs: null
 });
 
 export const scheduledActions = writable<ScheduledAction[]>([]);
@@ -56,4 +95,20 @@ export const audioBands = writable<AudioBandState>({
   envelopeA: 0,
   envelopeB: 0,
   peak: false
+});
+
+export const waveformOverview = writable<WaveformOverview | null>(null);
+export const timelineSeekRequest = writable<TimelineSeekRequest | null>(null);
+export const essentiaAnalysis = writable<EssentiaAnalysisState>({
+  bpm: null,
+  confidence: null,
+  duration: null,
+  boundaries: [],
+  sections: [],
+  energyCurve: [],
+  updatedAtMs: null
+});
+export const automationRuntime = writable<AutomationRuntimeState>({
+  speed: 0.5,
+  stutter: 0
 });

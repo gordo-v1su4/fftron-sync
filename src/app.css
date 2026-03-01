@@ -29,15 +29,27 @@
 }
 
 body {
-  @apply bg-surface-950 text-surface-50 overflow-hidden h-screen w-screen flex flex-col p-2 text-xs select-none;
-  /* Make all text small and dense to match professional NLE */
+  @apply bg-surface-950 text-surface-50 overflow-hidden h-screen w-screen flex flex-col p-2 text-[0.78rem] leading-snug select-none;
+  font-family:
+    "Avenir Next",
+    "Segoe UI",
+    "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
 }
 
-/* Compact specific generic overrides */
 button,
 input,
 select {
-  @apply text-xs leading-none;
+  @apply text-[0.72rem] leading-snug;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 1px;
 }
 
 /* Custom rectangular NLE sliders */

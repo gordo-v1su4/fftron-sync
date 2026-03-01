@@ -17,6 +17,7 @@
   } from "$lib/tauri/commands";
   import {
     activeSection,
+    detectedTempo,
     runtimeCapabilities,
     scheduledActions,
     tempoState,
@@ -143,6 +144,8 @@
   onMount(async () => {
     await refresh();
   });
+
+  $: bpmInput = Math.round($tempoState.bpm * 100) / 100;
 </script>
 
 <div
@@ -156,17 +159,22 @@
     >
       Transport + Runtime
     </h2>
-    <p class="text-[0.6rem] m-0 truncate text-primary-500">{status}</p>
+    <p class="text-[0.6rem] m-0 truncate text-primary-500" aria-live="polite">
+      {status}
+    </p>
   </div>
 
   <div class="flex flex-col gap-1 flex-1 text-[0.65rem]">
     <div
       class="flex flex-wrap gap-1 items-center bg-surface-950 p-1 border border-surface-800 rounded-sm"
     >
-      <label class="text-surface-500 uppercase font-bold text-[0.55rem] w-8"
+      <label
+        for="transport-bpm"
+        class="text-surface-500 uppercase font-bold text-[0.55rem] w-8"
         >BPM</label
       >
       <input
+        id="transport-bpm"
         type="number"
         bind:value={bpmInput}
         min="20"
@@ -196,15 +204,23 @@
           resyncDownbeat(Date.now()).then((value) => tempoState.set(value))}
         >Resync</button
       >
+      <span
+        class="ml-1 px-1.5 py-0.5 rounded-sm border border-emerald-500/60 bg-emerald-500/10 text-emerald-300 font-mono"
+      >
+        DET {$detectedTempo.bpm !== null ? $detectedTempo.bpm.toFixed(2) : "--"}
+      </span>
     </div>
 
     <div
       class="flex flex-wrap gap-1 items-center bg-surface-950 p-1 border border-surface-800 rounded-sm"
     >
-      <label class="text-surface-500 uppercase font-bold text-[0.55rem] w-8"
+      <label
+        for="transport-quantize"
+        class="text-surface-500 uppercase font-bold text-[0.55rem] w-8"
         >Qtz</label
       >
       <select
+        id="transport-quantize"
         bind:value={selectedGrid}
         class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm outline-none"
       >
@@ -233,10 +249,13 @@
     <div
       class="flex flex-wrap gap-1 items-center bg-surface-950 p-1 border border-surface-800 rounded-sm"
     >
-      <label class="text-surface-500 uppercase font-bold text-[0.55rem] w-8"
+      <label
+        for="transport-decode"
+        class="text-surface-500 uppercase font-bold text-[0.55rem] w-8"
         >Rndr</label
       >
       <select
+        id="transport-decode"
         value={$runtimeCapabilities.selectedDecode}
         on:change={switchDecode}
         class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm w-20 outline-none"
@@ -250,10 +269,13 @@
           disabled={!$runtimeCapabilities.nativeFfmpeg}>native_ffmpeg</option
         >
       </select>
-      <label class="text-surface-500 uppercase font-bold text-[0.55rem] ml-1"
+      <label
+        for="transport-renderer"
+        class="text-surface-500 uppercase font-bold text-[0.55rem] ml-1"
         >GPU</label
       >
       <select
+        id="transport-renderer"
         value={$runtimeCapabilities.selectedRenderer}
         on:change={switchRenderer}
         class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm w-16 outline-none"
@@ -290,6 +312,18 @@
       <span
         >Queue: <span class="text-surface-200">{$scheduledActions.length}</span
         ></span
+      >
+    </div>
+    <div class="flex justify-between">
+      <span class="text-emerald-300"
+        >Detected BPM: {$detectedTempo.bpm !== null
+          ? $detectedTempo.bpm.toFixed(2)
+          : "N/A"}</span
+      >
+      <span class="text-emerald-300"
+        >Detected Conf: {$detectedTempo.confidence !== null
+          ? `${($detectedTempo.confidence * 100).toFixed(0)}%`
+          : "N/A"}</span
       >
     </div>
   </div>

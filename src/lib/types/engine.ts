@@ -24,6 +24,13 @@ export interface TempoState {
   tapCount: number;
 }
 
+export interface DetectedTempoState {
+  bpm: number | null;
+  confidence: number | null;
+  source: 'essentia' | null;
+  updatedAtMs: number | null;
+}
+
 export interface ScheduledAction {
   id: number;
   action: string;

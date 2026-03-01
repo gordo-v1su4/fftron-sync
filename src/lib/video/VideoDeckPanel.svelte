@@ -2,6 +2,7 @@
   import { onDestroy } from "svelte";
   import {
     activeSection,
+    automationRuntime,
     audioBands,
     reactiveEnvelope,
     tempoState,
@@ -11,7 +12,8 @@
   export let currentTime = 0;
   export let autoSwitchEnabled = true;
   export let quantizeMode: "beat" | "bar" = "beat";
-  export let seekTo: (time: number) => void = (t) => {
+  export let seekTo: (time: number) => void = () => {};
+  const seekPlayer = (t: number) => {
     if (!player || !Number.isFinite(t)) return;
     player.currentTime = Math.max(0, Math.min(t, duration || t));
   };
@@ -30,7 +32,11 @@
   let player: HTMLVideoElement | null = null;
   let status = "Drop or upload clips to begin playback.";
   let envelopeGateEnabled = true;
+  let speedRampEnabled = true;
+  let currentPlaybackRate = 1;
+  let lastStutterPulseMs = 0;
   let lastQuantizeSlot = -1;
+  let playbackRafId = 0;
   let pendingSeekRatio: number | null = null;
   let resumeAfterSwitch = false;
   const matrixColumns = 14;
@@ -41,10 +47,11 @@
   const makeId = (): string =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-  const selectedClip = (): VideoClip | undefined =>
-    clips.find((clip) => clip.id === selectedClipId);
-  const selectedClipIndex = (): number =>
-    clips.findIndex((clip) => clip.id === selectedClipId);
+  let currentClip: VideoClip | undefined = undefined;
+  let currentClipIndex = -1;
+
+  $: currentClip = clips.find((clip) => clip.id === selectedClipId);
+  $: currentClipIndex = clips.findIndex((clip) => clip.id === selectedClipId);
   const laneIsActive = (lane: number): boolean =>
     soloLane === null ? !laneMuted[lane] : soloLane === lane;
   const playableClips = (): VideoClip[] =>
@@ -80,6 +87,7 @@
   };
 
   const uploadClips = (event: Event) => {
+    const lane = Number(uploadLane);
     const files = Array.from(
       (event.currentTarget as HTMLInputElement).files ?? [],
     ).filter((file) => file.type.startsWith("video/"));
@@ -94,7 +102,7 @@
       (_, slot) => slot,
     ).filter(
       (slot) =>
-        !clips.some((clip) => clip.lane === uploadLane && clip.slot === slot),
+        !clips.some((clip) => clip.lane === lane && clip.slot === slot),
     );
 
     if (availableSlots.length === 0) {
@@ -109,7 +117,7 @@
       name: file.name,
       url: URL.createObjectURL(file),
       sizeMb: (file.size / (1024 * 1024)).toFixed(1),
-      lane: uploadLane,
+      lane,
       slot: availableSlots[index],
     }));
 
@@ -119,8 +127,8 @@
     ensurePlayableSelection();
     if (!selectedClipId) selectedClipId = added[0].id;
     status = droppedCount
-      ? `Loaded ${added.length} clip(s) to layer ${uploadLane + 1}. ${droppedCount} clip(s) skipped.`
-      : `Loaded ${added.length} clip${added.length > 1 ? "s" : ""} to layer ${uploadLane + 1}`;
+      ? `Loaded ${added.length} clip(s) to layer ${lane + 1}. ${droppedCount} clip(s) skipped.`
+      : `Loaded ${added.length} clip${added.length > 1 ? "s" : ""} to layer ${lane + 1}`;
   };
 
   const removeClip = (id: string) => {
@@ -192,6 +200,60 @@
     envelopeGateEnabled = !envelopeGateEnabled;
   };
 
+  const applySpeedRamp = () => {
+    if (!player || player.paused) return;
+    const envelope = Math.max(0, Math.min(1, $audioBands.envelopeB));
+    const automationSpeed = Math.max(0, Math.min(1, $automationRuntime.speed));
+    const automationStutter = Math.max(0, Math.min(1, $automationRuntime.stutter));
+    const rampDepth = quantizeMode === "bar" ? 0.45 : 0.28;
+    const automationRate = 0.45 + automationSpeed * 1.75;
+    const envelopeRate =
+      1 + (envelope - 0.5) * 2 * rampDepth;
+    const targetRate = speedRampEnabled
+      ? Math.max(0.35, Math.min(2.5, automationRate * envelopeRate))
+      : 1;
+    currentPlaybackRate = targetRate;
+    player.playbackRate = targetRate;
+
+    if (speedRampEnabled && automationStutter > 0.72) {
+      const now = Date.now();
+      const pulseEveryMs = Math.max(55, 185 - automationStutter * 120);
+      if (now - lastStutterPulseMs >= pulseEveryMs && player.currentTime > 0.06) {
+        const jumpBack = 0.012 + automationStutter * 0.065;
+        player.currentTime = Math.max(0, player.currentTime - jumpBack);
+        lastStutterPulseMs = now;
+      }
+    }
+  };
+
+  const stopPlaybackLoop = () => {
+    if (playbackRafId) {
+      cancelAnimationFrame(playbackRafId);
+      playbackRafId = 0;
+    }
+  };
+
+  const startPlaybackLoop = () => {
+    if (playbackRafId) return;
+
+    const tick = () => {
+      playbackRafId = requestAnimationFrame(tick);
+      if (!player) return;
+
+      currentTime = player.currentTime || 0;
+      if ((!duration || duration <= 0) && Number.isFinite(player.duration)) {
+        duration = player.duration;
+      }
+
+      if (!player.paused) {
+        applySpeedRamp();
+        maybeQuantizedSwitch();
+      }
+    };
+
+    playbackRafId = requestAnimationFrame(tick);
+  };
+
   const play = async () => {
     if (!player) return;
     ensurePlayableSelection();
@@ -199,20 +261,31 @@
       status = "No active clip available.";
       return;
     }
+    applySpeedRamp();
     lastQuantizeSlot = getTransportSlotIndex();
+    lastStutterPulseMs = Date.now();
+    startPlaybackLoop();
     await player.play();
-    status = `Playing ${selectedClip()?.name ?? "clip"}`;
+    status = `Playing ${currentClip?.name ?? "clip"}`;
   };
 
   const pause = () => {
     player?.pause();
+    stopPlaybackLoop();
+    if (player) player.playbackRate = 1;
+    currentPlaybackRate = 1;
+    lastStutterPulseMs = 0;
     status = "Paused";
   };
 
   const stop = () => {
     if (!player) return;
     player.pause();
+    stopPlaybackLoop();
     player.currentTime = 0;
+    player.playbackRate = 1;
+    currentPlaybackRate = 1;
+    lastStutterPulseMs = 0;
     currentTime = 0;
     lastQuantizeSlot = -1;
     status = "Stopped";
@@ -231,7 +304,14 @@
     ensurePlayableSelection();
   };
 
+  const setUploadLane = (event: Event) => {
+    uploadLane = Number((event.currentTarget as HTMLSelectElement).value);
+  };
+
+  $: seekTo = seekPlayer;
+
   onDestroy(() => {
+    stopPlaybackLoop();
     for (const clip of clips) URL.revokeObjectURL(clip.url);
   });
 </script>
@@ -247,7 +327,9 @@
     >
       Video Matrix
     </h2>
-    <p class="text-[0.6rem] m-0 truncate text-primary-500">{status}</p>
+    <p class="text-[0.6rem] m-0 truncate text-primary-500" aria-live="polite">
+      {status}
+    </p>
   </div>
 
   <div
@@ -268,6 +350,7 @@
               ]
                 ? 'text-error-500 border border-error-500'
                 : 'text-surface-400 border border-surface-700'}"
+              aria-label={`Mute layer ${layer + 1}`}
               on:click={() => toggleMuteLane(layer)}>M</button
             >
             <button
@@ -275,6 +358,7 @@
               layer
                 ? 'text-primary-500 border border-primary-500'
                 : 'text-surface-400 border border-surface-700'}"
+              aria-label={`Solo layer ${layer + 1}`}
               on:click={() => toggleSoloLane(layer)}>S</button
             >
           </div>
@@ -287,6 +371,9 @@
               clip.id === selectedClipId
                 ? 'border-primary-500 shadow-[inset_0_0_12px_rgba(245,158,11,0.25)]'
                 : 'border-transparent'}"
+              aria-label={clip
+                ? `Select ${clip.name} on layer ${layer + 1}, slot ${col + 1}`
+                : `Empty slot ${col + 1} on layer ${layer + 1}`}
               on:click={() => clip && selectClip(clip.id)}
             >
               {#if clip}
@@ -322,9 +409,12 @@
       <div
         class="flex gap-1 items-center bg-surface-900 p-1 rounded-sm border border-surface-800"
       >
+        <label for="upload-lane" class="sr-only">Upload lane</label>
         <select
+          id="upload-lane"
           class="flex-1 text-[0.6rem] bg-surface-950 border border-surface-800 rounded-sm py-0.5 px-1"
-          bind:value={uploadLane}
+          value={String(uploadLane)}
+          on:change={setUploadLane}
         >
           <option value={0}>L1</option>
           <option value={1}>L2</option>
@@ -360,10 +450,12 @@
             <div class="flex justify-between items-start gap-1">
               <button
                 class="text-left truncate flex-1 text-[0.6rem] font-bold text-surface-200"
+                aria-label={`Select clip ${clip.name}`}
                 on:click={() => selectClip(clip.id)}>{clip.name}</button
               >
               <button
                 class="text-[0.55rem] text-surface-500 hover:text-error-500"
+                aria-label={`Remove clip ${clip.name}`}
                 on:click={() => removeClip(clip.id)}>✕</button
               >
             </div>
@@ -385,21 +477,26 @@
         <div class="absolute top-1 right-1 z-10 flex gap-1 pointer-events-none">
           <span
             class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-surface-800 rounded-sm font-mono backdrop-blur-sm"
-            >C: {Math.max(1, selectedClipIndex() + 1)}</span
+            >C: {Math.max(1, currentClipIndex + 1)}</span
           >
           <span
             class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-surface-800 rounded-sm font-mono backdrop-blur-sm"
-            >{$activeSection}</span
+            >{$activeSection} · {currentPlaybackRate.toFixed(2)}x · S{
+              ($automationRuntime.speed * 100).toFixed(0)
+            } · T{($automationRuntime.stutter * 100).toFixed(0)}</span
           >
         </div>
 
-        {#if selectedClip()}
+        {#if currentClip}
           <video
             bind:this={player}
-            src={selectedClip()?.url}
+            src={currentClip.url}
             class="w-full h-full object-contain"
             playsinline
             loop
+            on:play={startPlaybackLoop}
+            on:pause={stopPlaybackLoop}
+            on:ended={stopPlaybackLoop}
             on:loadedmetadata={() => {
               duration = player?.duration ?? 0;
               if (player && pendingSeekRatio !== null && duration > 0) {
@@ -410,12 +507,14 @@
                 pendingSeekRatio = null;
               }
               if (player && resumeAfterSwitch) {
+                startPlaybackLoop();
                 void player.play();
                 resumeAfterSwitch = false;
               }
             }}
             on:timeupdate={() => {
               currentTime = player?.currentTime ?? 0;
+              applySpeedRamp();
               maybeQuantizedSwitch();
             }}
           >
@@ -441,14 +540,17 @@
             <div class="flex gap-1">
               <button
                 class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
+                aria-label="Play selected clip"
                 on:click={play}>▶</button
               >
               <button
                 class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
+                aria-label="Pause selected clip"
                 on:click={pause}>⏸</button
               >
               <button
                 class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
+                aria-label="Stop selected clip"
                 on:click={stop}>⏹</button
               >
             </div>
@@ -459,6 +561,20 @@
               on:click={toggleEnvelopeGate}
             >
               GATE {envelopeGateEnabled ? "ON" : "OFF"}
+            </button>
+            <button
+              class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {speedRampEnabled
+                ? 'border-primary-500 bg-primary-500/20 text-primary-400'
+                : 'border-surface-700 bg-surface-800 text-surface-400'}"
+              on:click={() => {
+                speedRampEnabled = !speedRampEnabled;
+                if (!speedRampEnabled && player) {
+                  player.playbackRate = 1;
+                  currentPlaybackRate = 1;
+                }
+              }}
+            >
+              RAMP {speedRampEnabled ? "ON" : "OFF"}
             </button>
           </div>
         </div>
