@@ -44,7 +44,7 @@ Controls:
 
 - **GATE ON**: count real audio onsets via the envelope threshold.
 - **GATE OFF**: quantized boundaries count instead, useful for testing without audio.
-- **Onsets**: number of counted onsets before the next clip switch.
+- **Onsets**: number of counted onsets before the next clip switch. The UI now shows both a numeric `current/target` count and a segmented dot/bar meter for accumulated onset progress.
 - **Skip**: probability that an eligible switch is bypassed.
 
 ## How TimeShaper presets affect videos
@@ -78,7 +78,7 @@ So the stack is:
 2. Bottom curves set speed/stutter automation values.
 3. Audio analyzer supplies FFT/envelope/onsets.
 4. TimeShaper preset remaps source time for the current clip.
-5. Onset counter decides when the next clip is allowed to cycle.
+5. Onset counter decides when the next clip is allowed to cycle, with the dot/bar meter showing progress toward that target.
 6. FPS HUD reports actual browser frame cadence.
 
 ## Frame-rate HUD

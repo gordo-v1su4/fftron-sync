@@ -53,6 +53,7 @@
   let onsetSwitchTarget = 4;
   let onsetCountForClip = 0;
   let onsetGateWasOpen = false;
+  const maxOnsetDots = 8;
   let currentPlaybackRate = 1;
   let currentAutomationRate = 1;
   let currentAutomationStutter = 0;
@@ -311,7 +312,15 @@
 
   const applyOnsetTarget = () => {
     onsetSwitchTarget = Math.max(1, Math.min(32, Math.round(Number(onsetSwitchTarget) || 1)));
+    onsetCountForClip = Math.min(onsetCountForClip, onsetSwitchTarget);
   };
+
+  const getOnsetProgress = (): number =>
+    onsetSwitchTarget > 0 ? clamp(onsetCountForClip / onsetSwitchTarget, 0, 1) : 0;
+
+  const getOnsetDotCount = (): number => Math.max(1, Math.min(maxOnsetDots, onsetSwitchTarget));
+
+  const getFilledOnsetDots = (): number => Math.round(getOnsetProgress() * getOnsetDotCount());
 
   const registerOnsetIfNeeded = () => {
     const gateOpen = $audioBands.envelopeA > $reactiveEnvelope.threshold;
@@ -893,9 +902,37 @@
                 <option value="high">HIGH</option>
                 <option value="full">FULL</option>
               </select>
-              <span class="text-[0.52rem] text-surface-400 font-mono" title="Current counted onsets for this clip before auto-switching">
-                {onsetCountForClip}/{onsetSwitchTarget}
-              </span>
+              <div
+                class="flex items-center gap-1"
+                data-testid="onset-progress-meter"
+                title="Accumulated onsets for the current clip. Filled dots and bar show progress toward the switch target."
+              >
+                <span class="text-[0.52rem] text-surface-400 font-mono">
+                  {onsetCountForClip}/{onsetSwitchTarget}
+                </span>
+                <div class="flex gap-[2px]" aria-hidden="true">
+                  {#each Array.from({ length: getOnsetDotCount() }) as _, dotIndex}
+                    <span
+                      class="h-2 w-2 rounded-full border {dotIndex < getFilledOnsetDots()
+                        ? 'border-primary-400 bg-primary-400 shadow-[0_0_6px_rgba(245,158,11,0.65)]'
+                        : 'border-surface-700 bg-surface-950'}"
+                    ></span>
+                  {/each}
+                </div>
+                <div
+                  class="h-1 w-16 overflow-hidden rounded-full border border-surface-700 bg-surface-950"
+                  role="meter"
+                  aria-label="Accumulated onsets before next clip"
+                  aria-valuemin="0"
+                  aria-valuemax={onsetSwitchTarget}
+                  aria-valuenow={onsetCountForClip}
+                >
+                  <div
+                    class="h-full bg-primary-400 transition-all duration-100"
+                    style={`width:${getOnsetProgress() * 100}%`}
+                  ></div>
+                </div>
+              </div>
               <label for="onset-switch-target" class="text-[0.52rem] text-surface-400 uppercase font-bold">Onsets</label>
               <input
                 id="onset-switch-target"
