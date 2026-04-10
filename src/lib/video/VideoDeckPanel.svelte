@@ -50,6 +50,9 @@
   let timeShaperLastAppliedMs = 0;
   let timeShaperLastTriggeredAtMs: number | null = null;
   let switchSkipChancePercent = 0;
+  let onsetSwitchTarget = 4;
+  let onsetCountForClip = 0;
+  let onsetGateWasOpen = false;
   let currentPlaybackRate = 1;
   let currentAutomationRate = 1;
   let currentAutomationStutter = 0;
@@ -301,7 +304,22 @@
     pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
     resumeAfterSwitch = Boolean(player && !player.paused);
     selectedClipId = playable[nextIndex].id;
-    status = `Quantized ${quantizeMode} switch: ${playable[nextIndex].name} (slot ${slotIndex})`;
+    onsetCountForClip = 0;
+    onsetGateWasOpen = false;
+    status = `Quantized ${quantizeMode} switch after ${onsetSwitchTarget} onset(s): ${playable[nextIndex].name} (slot ${slotIndex})`;
+  };
+
+  const applyOnsetTarget = () => {
+    onsetSwitchTarget = Math.max(1, Math.min(32, Math.round(Number(onsetSwitchTarget) || 1)));
+  };
+
+  const registerOnsetIfNeeded = () => {
+    const gateOpen = $audioBands.envelopeA > $reactiveEnvelope.threshold;
+    if (gateOpen && !onsetGateWasOpen) {
+      onsetCountForClip += 1;
+    }
+    onsetGateWasOpen = gateOpen;
+    return gateOpen;
   };
 
   const maybeQuantizedSwitch = () => {
@@ -312,20 +330,22 @@
       playableClips().length < 2
     )
       return;
+    const countedOnset = envelopeGateEnabled ? registerOnsetIfNeeded() : true;
     const slotIndex = getTransportSlotIndex();
     if (slotIndex > lastQuantizeSlot) {
-      const gateOpen =
-        !envelopeGateEnabled ||
-        $audioBands.envelopeA > $reactiveEnvelope.threshold;
-      if (lastQuantizeSlot >= 0 && gateOpen) {
+      if (!envelopeGateEnabled && lastQuantizeSlot >= 0) onsetCountForClip += 1;
+      if (lastQuantizeSlot >= 0 && onsetCountForClip >= onsetSwitchTarget) {
         const skipChance = clamp(switchSkipChancePercent, 0, 100) / 100;
         if (skipChance > 0 && Math.random() < skipChance) {
-          status = `Quantized ${quantizeMode} switch bypassed (${Math.round(skipChance * 100)}%)`;
+          status = `Quantized ${quantizeMode} switch bypassed (${Math.round(skipChance * 100)}%) · onset ${onsetCountForClip}/${onsetSwitchTarget}`;
+          onsetCountForClip = 0;
         } else {
           queueQuantizedSwitch(slotIndex);
         }
-      } else if (lastQuantizeSlot >= 0 && !gateOpen) {
-        status = `Gate closed: EnvA <= Thr`;
+      } else if (lastQuantizeSlot >= 0) {
+        status = countedOnset
+          ? `Holding ${currentClip?.name ?? "clip"}: onset ${onsetCountForClip}/${onsetSwitchTarget}`
+          : `Holding ${currentClip?.name ?? "clip"}: waiting for onset ${onsetCountForClip}/${onsetSwitchTarget}`;
       }
       lastQuantizeSlot = slotIndex;
     }
@@ -337,8 +357,14 @@
     );
   };
 
+  const resetOnsetCounter = () => {
+    onsetCountForClip = 0;
+    onsetGateWasOpen = false;
+  };
+
   const toggleEnvelopeGate = () => {
     envelopeGateEnabled = !envelopeGateEnabled;
+    resetOnsetCounter();
   };
 
   const buildTimeShapeCurve = (): VideoTimeShapeCurve => ({
@@ -513,6 +539,7 @@
     applySpeedRamp();
     lastQuantizeSlot = getTransportSlotIndex();
     lastStutterPulseMs = Date.now();
+    resetOnsetCounter();
     startPlaybackLoop();
     await player.play();
     status = `Playing ${currentClip?.name ?? "clip"}`;
@@ -539,6 +566,7 @@
     timeShaperLastAppliedMs = 0;
     currentTime = 0;
     lastQuantizeSlot = -1;
+    resetOnsetCounter();
     status = "Stopped";
   };
 
@@ -625,6 +653,9 @@
               aria-label={clip
                 ? `Select ${clip.name} on layer ${layer + 1}, slot ${col + 1}`
                 : `Empty slot ${col + 1} on layer ${layer + 1}`}
+              title={clip
+                ? `Matrix slot: ${clip.name}. Click to cue this clip. Auto-cycling repeats it until ${onsetSwitchTarget} onset(s) are counted, then switches on the next ${quantizeMode} boundary.`
+                : `Empty matrix slot. Add videos from the sample folder or your own files.`}
               on:click={() => clip && selectClip(clip.id)}
             >
               {#if clip}
@@ -733,6 +764,7 @@
           <span
             class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-primary-500/70 text-primary-300 rounded-sm font-mono backdrop-blur-sm"
             data-testid="video-timeshaper-hud"
+            title="Live TimeShaper status. Preset curves below remap the selected video clip's source time while it remains the one visible deck."
             >{timeShaperStatus}</span
           >
           <span
@@ -818,6 +850,7 @@
                 class="btn btn-sm text-[0.58rem] px-1.5 py-0.5 border font-bold {timeShaperEnabled
                   ? 'border-primary-500 bg-primary-500/20 text-primary-400'
                   : 'border-surface-700 bg-surface-800 text-surface-400'}"
+                title="Toggle video TimeShaper. When enabled, the selected preset can stutter, scratch, reverse, or drag the current clip's source time."
                 on:click={() => {
                   timeShaperEnabled = !timeShaperEnabled;
                   if (!timeShaperEnabled) timeShaperStatus = "TimeShaper bypassed";
@@ -831,6 +864,7 @@
                 bind:value={selectedTimeShapePresetId}
                 class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
                 aria-label="TimeShaper curve preset"
+                title="Choose the preset curve that remaps video timing: stutter, scratch, reverse, tape stop, or half-time drag."
               >
                 {#each timeShapePresets as preset}
                   <option value={preset.id}>{preset.label}</option>
@@ -846,22 +880,41 @@
                 bind:value={timeShaperMix}
                 class="w-14 h-1 accent-primary-500"
                 aria-label="TimeShaper mix amount"
+                title="Dry/wet amount for video time remapping. 0 keeps normal playback; 1 applies the full preset curve."
               />
               <select
                 bind:value={timeShaperBand}
                 class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
                 aria-label="TimeShaper audio band"
+                title="Audio band used to trigger TimeShaper movement. The bottom timeline curves still feed speed/stutter automation; this selects the live trigger band."
               >
                 <option value="low">LOW</option>
                 <option value="mid">MID</option>
                 <option value="high">HIGH</option>
                 <option value="full">FULL</option>
               </select>
+              <span class="text-[0.52rem] text-surface-400 font-mono" title="Current counted onsets for this clip before auto-switching">
+                {onsetCountForClip}/{onsetSwitchTarget}
+              </span>
+              <label for="onset-switch-target" class="text-[0.52rem] text-surface-400 uppercase font-bold">Onsets</label>
+              <input
+                id="onset-switch-target"
+                type="number"
+                min="1"
+                max="32"
+                step="1"
+                bind:value={onsetSwitchTarget}
+                on:input={applyOnsetTarget}
+                class="w-10 bg-surface-950 border border-surface-700 rounded-sm px-1 py-0 text-[0.52rem] font-mono text-surface-300 text-right"
+                aria-label="Onsets before next clip"
+                title="The current clip repeats until this many audio onsets are counted, then the next active matrix clip is selected on the quantized beat/bar boundary."
+              />
             </div>
             <button
               class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {envelopeGateEnabled
                 ? 'border-primary-500 bg-primary-500/20 text-primary-400'
                 : 'border-surface-700 bg-surface-800 text-surface-400'}"
+              title="Gate auto-cycling by audio onsets. When on, clips repeat until the onset counter reaches the target; when off, quantized boundaries count instead."
               on:click={toggleEnvelopeGate}
             >
               GATE {envelopeGateEnabled ? "ON" : "OFF"}
@@ -870,6 +923,7 @@
               class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {speedRampEnabled
                 ? 'border-primary-500 bg-primary-500/20 text-primary-400'
                 : 'border-surface-700 bg-surface-800 text-surface-400'}"
+              title="Toggle bottom timeline speed/stutter automation. These curves still modulate playback rate and stutter depth while TimeShaper handles source-time remapping."
               on:click={() => {
                 speedRampEnabled = !speedRampEnabled;
                 if (!speedRampEnabled && player) {
