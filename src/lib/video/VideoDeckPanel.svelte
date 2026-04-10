@@ -10,6 +10,7 @@
   import {
     activeSection,
     audioOnsets,
+    audioRuntime,
     automationBounds,
     automationRuntime,
     audioBands,
@@ -355,7 +356,33 @@
 
   const getFilledOnsetDots = (): number => Math.round(getOnsetProgress() * getOnsetDotCount());
 
+  const countEssentiaOnsets = (): number => {
+    const currentAudioTime = $audioRuntime.source === "file" ? $audioRuntime.currentTime : 0;
+    if (currentAudioTime <= 0) return 0;
+
+    let counted = 0;
+    audioOnsets.update((events) =>
+      events.map((event) => {
+        if (
+          event.source === "essentia" &&
+          !event.counted &&
+          event.timeSeconds <= currentAudioTime + 0.05
+        ) {
+          counted += 1;
+          return { ...event, counted: true as const };
+        }
+        return event;
+      }),
+    );
+
+    if (counted > 0) onsetCountForClip += counted;
+    return counted;
+  };
+
   const registerOnsetIfNeeded = () => {
+    const essentiaCount = countEssentiaOnsets();
+    if (essentiaCount > 0) return true;
+
     const gateOpen = $audioBands.envelopeA > $reactiveEnvelope.threshold;
     if (gateOpen && !onsetGateWasOpen) {
       onsetCountForClip += 1;
@@ -486,13 +513,14 @@
     const shapedTime = wrapMediaTime(result.sourceTimeSeconds, duration);
     const delta = Math.abs(shapedTime - (player.currentTime || 0));
     const seekThreshold = result.metadata.hardJump ? 0.01 : 0.035;
+    const allowSourceJump = result.metadata.playbackMode !== "tapeStop";
 
-    if (delta > seekThreshold && now - timeShaperLastAppliedMs > 45) {
+    if (allowSourceJump && delta > seekThreshold && now - timeShaperLastAppliedMs > 45) {
       player.currentTime = shapedTime;
       timeShaperLastAppliedMs = now;
     }
 
-    const shapedRate = Math.max(0.25, Math.min(speedDomainMax, Math.abs(result.playbackRate || 1)));
+    const shapedRate = Math.max(0.5, Math.min(speedDomainMax, Math.abs(result.playbackRate || 1)));
     player.playbackRate = Math.max(0.25, Math.min(speedDomainMax, player.playbackRate * 0.75 + shapedRate * 0.25));
     currentPlaybackRate = player.playbackRate;
     timeShaperStatus = `${currentTimeShapePreset.shortLabel} · ${(result.mixAmount * 100).toFixed(0)}% · ${result.metadata.playbackMode}`;

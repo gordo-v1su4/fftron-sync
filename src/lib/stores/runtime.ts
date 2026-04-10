@@ -58,7 +58,7 @@ export interface AudioOnsetEvent {
   value: number;
   threshold: number;
   counted: boolean;
-  source: 'detected' | 'counted';
+  source: 'essentia' | 'detected' | 'counted';
 }
 
 export const runtimeCapabilities = writable<RuntimeCapabilities>({

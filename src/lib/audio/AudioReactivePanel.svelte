@@ -576,6 +576,19 @@
         updatedAtMs: Date.now(),
       });
       const sectionCounts = new Map<string, number>();
+      audioOnsets.set(
+        full.onsets.map((onset, index) => ({
+          id: `ess-onset-${index}`,
+          timestampMs: Date.now(),
+          timeSeconds: Math.max(0, onset),
+          band: "full" as const,
+          value: 1,
+          threshold: 0,
+          counted: false,
+          source: "essentia" as const,
+        })),
+      );
+
       essentiaAnalysis.set({
         bpm: full.bpm,
         confidence: normalizedConfidence,

@@ -6,6 +6,8 @@
 
 ![FFTRON visual TODO completion view](./images/hot-deck-vj-visual-todo-complete.png)
 
+![FFTRON Essentia onset and curve visual pass](./images/hot-deck-vj-essentia-curve-fft.png)
+
 This guide explains how the current implementation pieces fit together and what is already live in the browser UI.
 
 ## Use the repository sample media
@@ -37,7 +39,7 @@ The app no longer switches simply every beat by default. It now repeats the curr
 
 The current rule is:
 
-1. Audio FFT/envelope data from the Audio Reactive Analyzer creates an onset when `Env A` crosses the threshold.
+1. Essentia API onsets populate the waveform markers after detection; until Essentia results are available, live FFT threshold crossings can still provide fallback detected/counted onset events.
 2. The current clip keeps repeating while the onset counter is below **Onsets**.
 3. When the counter reaches **Onsets**, the next active matrix clip is selected on the next quantized `Beat` or `Bar` boundary.
 4. The counter resets after a switch.
@@ -80,7 +82,7 @@ So the stack is:
 2. Bottom curves set speed/stutter automation values.
 3. Audio analyzer supplies FFT/envelope/onsets.
 4. TimeShaper preset remaps source time for the current clip.
-5. Onset counter decides when the next clip is allowed to cycle, with the dot/bar meter showing progress toward that target.
+5. Onset counter decides when the next clip is allowed to cycle, with the dot/bar meter showing progress toward that target. Essentia onsets turn into counted markers as playback crosses their timestamps.
 6. FPS HUD reports actual browser frame cadence.
 
 ## Frame-rate HUD
@@ -99,8 +101,9 @@ The browser smoke check verified the live UI path and then the operator workflow
 - video file upload path works in the Video Matrix
 - audio file upload path works in the Audio Reactive Analyzer
 - repo sample media location is documented for manual browser selection
-- TimeShaper preset controls render in UI
-- `Tape Stop` changes video playback rate during browser playback
+- TimeShaper preset controls render in UI, including a larger visible curve preview and phase marker
+- `Tape Stop` no longer seeks/holds a still source frame; it uses playback-rate shaping with a non-zero floor and returns to normal speed when the trigger is inactive
+- FFT analyzer renders spectrum bars, threshold guide, selected band values, and onset flash feedback
 - FPS HUD rendered around 60 FPS / ~16.6ms in Chrome
 
 ## Known limitations
