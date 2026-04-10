@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import {
     activeSection,
+    audioOnsets,
     automationBounds,
     automationRuntime,
     essentiaAnalysis,
@@ -111,6 +112,7 @@
     index: number;
     total: number;
   }> = [];
+  let visibleOnsetMarkers: Array<{ position: number; counted: boolean; value: number; label: string }> = [];
   let sectionBands: Array<{
     section: string;
     label: string;
@@ -877,6 +879,15 @@
     })
     .filter((entry) => entry.position >= 0 && entry.position <= 100);
 
+  $: visibleOnsetMarkers = $audioOnsets
+    .map((event) => ({
+      position: toLocalPercent(event.timeSeconds / safeDuration, viewportStart, viewportWindow),
+      counted: event.counted,
+      value: event.value,
+      label: `${event.counted ? "Counted" : "Detected"} ${event.band.toUpperCase()} onset · ${event.value.toFixed(2)}`
+    }))
+    .filter((entry) => entry.position >= 0 && entry.position <= 100);
+
   $: sectionBands = timelineSections
     .map((section) => {
       const startPercent = toLocalPercent(
@@ -1326,6 +1337,23 @@
             />
           </svg>
         </div>
+        {#each visibleOnsetMarkers as marker}
+          <div
+            class="absolute top-0 bottom-0 z-20 w-[1px] {marker.counted ? 'bg-primary-300' : 'bg-surface-300/70'}"
+            style={`left:${marker.position}%`}
+            title={marker.label}
+          >
+            <span
+              class="absolute -top-0.5 -ml-[4px] h-2 w-2 rounded-full border {marker.counted
+                ? 'border-primary-100 bg-primary-400 shadow-[0_0_8px_rgba(245,158,11,0.85)]'
+                : 'border-surface-200 bg-surface-500'}"
+            ></span>
+          </div>
+        {/each}
+        <div
+          class="absolute left-0 right-0 top-[18%] z-10 border-t border-primary-300/40 border-dashed pointer-events-none"
+          title="Approximate onset threshold guide"
+        ></div>
         {#if !$waveformOverview}
           <div
             class="absolute inset-0 flex items-center justify-center text-[0.55rem] text-surface-500 uppercase tracking-widest"

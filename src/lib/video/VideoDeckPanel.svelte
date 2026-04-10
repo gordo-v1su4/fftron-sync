@@ -9,6 +9,7 @@
   } from "$lib/runtime/time-shaper";
   import {
     activeSection,
+    audioOnsets,
     automationBounds,
     automationRuntime,
     audioBands,
@@ -38,6 +39,7 @@
   let clips: VideoClip[] = [];
   let selectedClipId = "";
   let player: HTMLVideoElement | null = null;
+  let prewarmPlayer: HTMLVideoElement | null = null;
   let status = "Drop or upload clips to begin playback.";
   let envelopeGateEnabled = true;
   let speedRampEnabled = true;
@@ -62,6 +64,8 @@
   let playbackRafId = 0;
   let pendingSeekRatio: number | null = null;
   let resumeAfterSwitch = false;
+  let prewarmClipId = "";
+  let prewarmReady = false;
   const matrixColumns = 14;
   let uploadLane = 0;
   let laneMuted = [false, false, false];
@@ -181,11 +185,35 @@
   let currentClip: VideoClip | undefined = undefined;
   let currentClipIndex = -1;
   let currentTimeShapePreset: TimeShapePreset = timeShapePresets[0];
+  let nextPrewarmClip: VideoClip | undefined = undefined;
+  let timeShapePreviewPoints = "";
+  let timeShapePreviewPhase = 0;
 
   $: currentClip = clips.find((clip) => clip.id === selectedClipId);
   $: currentClipIndex = clips.findIndex((clip) => clip.id === selectedClipId);
   $: currentTimeShapePreset =
     timeShapePresets.find((preset) => preset.id === selectedTimeShapePresetId) ?? timeShapePresets[0];
+  $: nextPrewarmClip = (() => {
+    const playable = playableClips();
+    if (playable.length < 2 || !selectedClipId) return undefined;
+    const currentIndex = playable.findIndex((clip) => clip.id === selectedClipId);
+    return playable[(currentIndex < 0 ? 0 : currentIndex + 1) % playable.length];
+  })();
+  $: if (nextPrewarmClip?.id !== prewarmClipId) {
+    prewarmClipId = nextPrewarmClip?.id ?? "";
+    prewarmReady = false;
+    if (prewarmPlayer && nextPrewarmClip) {
+      prewarmPlayer.load();
+    }
+  }
+  $: timeShapePreviewPoints = currentTimeShapePreset.points
+    .map((point) => `${Math.max(0, Math.min(1, point.x)) * 100},${50 - Math.max(-1, Math.min(1, point.y)) * 38}`)
+    .join(" "), currentTimeShapePreset.id;
+  $: timeShapePreviewPhase = (() => {
+    const cycle = Math.max(0.0001, currentTimeShapePreset.cycleBeats);
+    const phase = (getBeatPosition() % cycle) / cycle;
+    return Math.max(0, Math.min(100, phase * 100));
+  })();
   const laneIsActive = (lane: number): boolean =>
     soloLane === null ? !laneMuted[lane] : soloLane === lane;
   const playableClips = (): VideoClip[] =>
@@ -302,6 +330,11 @@
     }
 
     const nextIndex = (currentIndex + 1) % playable.length;
+    const nextClip = playable[nextIndex];
+    if (prewarmClipId === nextClip.id && !prewarmReady) {
+      status = `Warming ${nextClip.name}; holding ${currentClip?.name ?? "clip"} to avoid frozen switch`;
+      return;
+    }
     pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
     resumeAfterSwitch = Boolean(player && !player.paused);
     selectedClipId = playable[nextIndex].id;
@@ -326,6 +359,21 @@
     const gateOpen = $audioBands.envelopeA > $reactiveEnvelope.threshold;
     if (gateOpen && !onsetGateWasOpen) {
       onsetCountForClip += 1;
+      audioOnsets.update((events) =>
+        [
+          ...events,
+          {
+            id: `cnt-${Date.now()}-${events.length}`,
+            timestampMs: Date.now(),
+            timeSeconds: player?.currentTime ?? currentTime ?? 0,
+            band: timeShaperBand,
+            value: $audioBands.envelopeA,
+            threshold: $reactiveEnvelope.threshold,
+            counted: true,
+            source: "counted" as const,
+          },
+        ].slice(-256),
+      );
     }
     onsetGateWasOpen = gateOpen;
     return gateOpen;
@@ -879,6 +927,25 @@
                   <option value={preset.id}>{preset.label}</option>
                 {/each}
               </select>
+              <svg
+                class="h-8 w-24 rounded-sm border border-surface-700 bg-surface-950"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                aria-label="Visible TimeShaper preset curve"
+                data-testid="timeshaper-curve-preview"
+              >
+                <rect x="0" y="0" width="100" height="100" fill="rgba(15,23,42,0.92)" />
+                <path d="M0 50 H100" stroke="rgba(148,163,184,0.35)" stroke-width="1" />
+                <polyline
+                  points={timeShapePreviewPoints}
+                  fill="none"
+                  stroke="rgb(190,242,100)"
+                  stroke-width="3"
+                  stroke-linejoin="round"
+                  stroke-linecap="round"
+                />
+                <line x1={timeShapePreviewPhase} x2={timeShapePreviewPhase} y1="0" y2="100" stroke="rgb(245,158,11)" stroke-width="1.5" />
+              </svg>
               <label for="timeshaper-mix" class="text-[0.52rem] text-surface-400 uppercase font-bold">Mix</label>
               <input
                 id="timeshaper-mix"
@@ -1004,6 +1071,18 @@
             </div>
           </div>
         </div>
+        {#if nextPrewarmClip}
+          <video
+            bind:this={prewarmPlayer}
+            src={nextPrewarmClip.url}
+            muted
+            preload="auto"
+            class="hidden"
+            aria-hidden="true"
+            on:canplay={() => { prewarmReady = true; }}
+            on:error={() => { prewarmReady = false; }}
+          ></video>
+        {/if}
       </div>
     </div>
   </div>

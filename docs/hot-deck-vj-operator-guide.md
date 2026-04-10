@@ -4,6 +4,8 @@
 
 ![FFTRON console sample workflow view](./images/hot-deck-vj-sample-loaded.png)
 
+![FFTRON visual TODO completion view](./images/hot-deck-vj-visual-todo-complete.png)
+
 This guide explains how the current implementation pieces fit together and what is already live in the browser UI.
 
 ## Use the repository sample media
@@ -83,7 +85,7 @@ So the stack is:
 
 ## Frame-rate HUD
 
-The top HUD shows live browser `requestAnimationFrame` cadence:
+The top HUD shows live browser `requestAnimationFrame` cadence, while the Video Matrix now includes a TimeShaper curve preview, an onset dot/bar meter, and tooltips for how the routing works:
 
 - `FPS` is measured over rolling samples.
 - `Frame` is the most recent measured frame budget in milliseconds.

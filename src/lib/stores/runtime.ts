@@ -50,6 +50,17 @@ export interface AutomationBoundsState {
   stutterMax: number;
 }
 
+export interface AudioOnsetEvent {
+  id: string;
+  timestampMs: number;
+  timeSeconds: number;
+  band: import('$lib/types/engine').ReactiveBandTarget;
+  value: number;
+  threshold: number;
+  counted: boolean;
+  source: 'detected' | 'counted';
+}
+
 export const runtimeCapabilities = writable<RuntimeCapabilities>({
   webgl2: true,
   webgpu: false,
@@ -110,6 +121,8 @@ export const audioBands = writable<AudioBandState>({
   envelopeB: 0,
   peak: false
 });
+
+export const audioOnsets = writable<AudioOnsetEvent[]>([]);
 
 export const waveformOverview = writable<WaveformOverview | null>(null);
 export const timelineSeekRequest = writable<TimelineSeekRequest | null>(null);

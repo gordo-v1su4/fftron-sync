@@ -4,6 +4,7 @@
     activeSection,
     automationBounds,
     audioBands,
+    audioOnsets,
     audioRuntime,
     detectedTempo,
     essentiaAnalysis,
@@ -44,6 +45,9 @@
   let rafId = 0;
   let lastFrameMs = 0;
   let fftData: Uint8Array | null = null;
+  let spectrumBars: number[] = Array.from({ length: 32 }, () => 0);
+  let onsetWasOpen = false;
+  let lastDetectedOnsetMs = 0;
   let loadedTrackUrl = "";
   let loadedMediaFile: File | null = null;
   let status = "Load a song (or mic) to drive FFT and envelopes.";
@@ -273,6 +277,26 @@
     return total / ((end - start + 1) * 255);
   };
 
+  const pushDetectedOnset = (value: number, timestamp: number) => {
+    const timeSeconds = audioElement && $audioRuntime.source === "file" ? audioElement.currentTime || 0 : 0;
+    audioOnsets.update((events) =>
+      [
+        ...events,
+        {
+          id: `det-${Math.round(timestamp)}-${events.length}`,
+          timestampMs: Date.now(),
+          timeSeconds,
+          band: target,
+          value,
+          threshold,
+          counted: false,
+          source: "detected" as const,
+        },
+      ].slice(-256),
+    );
+    lastDetectedOnsetMs = Date.now();
+  };
+
   const smoothEnvelope = (
     current: number,
     next: number,
@@ -314,6 +338,21 @@
       const scaledFull = clamp01(
         ((full - threshold) / Math.max(0.01, 1 - threshold)) * sensitivity,
       );
+
+      if (fftData.length > 0) {
+        const binSize = Math.max(1, Math.floor(fftData.length / spectrumBars.length));
+        spectrumBars = spectrumBars.map((_, barIndex) => {
+          const start = barIndex * binSize;
+          const end = Math.min(fftData!.length, start + binSize);
+          let total = 0;
+          for (let index = start; index < end; index += 1) total += fftData![index];
+          return end > start ? total / ((end - start) * 255) : 0;
+        });
+      }
+
+      const onsetOpen = targetedRaw > threshold;
+      if (onsetOpen && !onsetWasOpen) pushDetectedOnset(targetedRaw, timestamp);
+      onsetWasOpen = onsetOpen;
 
       const dt = lastFrameMs > 0 ? timestamp - lastFrameMs : 16.67;
       lastFrameMs = timestamp;
@@ -398,6 +437,7 @@
     });
     markers.set([]);
     activeSection.set("");
+    audioOnsets.set([]);
     essentiaAnalysis.set({
       bpm: null,
       confidence: null,
@@ -829,6 +869,44 @@
           on:input={applyEnvelopeSettings}
           class="accent-primary-500 h-1 bg-surface-800 rounded-sm appearance-none outline-none"
         />
+      </div>
+
+      <div
+        class="bg-surface-950 border border-surface-800 rounded-sm p-1 flex flex-col gap-1"
+        data-testid="fft-analyzer-visual"
+        title="FFT analyzer: bars show captured spectrum energy, the amber line is the trigger threshold, and the selected node is emphasized by the envelope meters below."
+      >
+        <div class="flex items-center justify-between text-[0.55rem] uppercase font-bold text-surface-400">
+          <span>FFT Analyzer</span>
+          <span class="font-mono text-primary-300">{target.toUpperCase()} · Thr {threshold.toFixed(2)}</span>
+        </div>
+        <div class="relative h-20 overflow-hidden rounded-sm border border-surface-800 bg-surface-950">
+          <div
+            class="absolute left-0 right-0 border-t border-primary-400/80"
+            style={`bottom:${threshold * 100}%`}
+          ></div>
+          <div class="absolute inset-0 flex items-end gap-[2px] px-1 pb-1">
+            {#each spectrumBars as bar, index}
+              <div
+                class="flex-1 rounded-t-[1px] {index < 4
+                  ? 'bg-emerald-400/75'
+                  : index < 18
+                    ? 'bg-primary-400/75'
+                    : 'bg-cyan-300/70'}"
+                style={`height:${Math.max(2, bar * 100)}%`}
+              ></div>
+            {/each}
+          </div>
+          {#if Date.now() - lastDetectedOnsetMs < 180}
+            <div class="absolute inset-0 border border-primary-300 shadow-[inset_0_0_20px_rgba(245,158,11,0.35)]"></div>
+          {/if}
+        </div>
+        <div class="grid grid-cols-4 gap-1 text-[0.55rem] font-mono text-surface-400">
+          <span class={target === "low" ? "text-emerald-300" : ""}>LOW {$audioBands.low.toFixed(2)}</span>
+          <span class={target === "mid" ? "text-primary-300" : ""}>MID {$audioBands.mid.toFixed(2)}</span>
+          <span class={target === "high" ? "text-cyan-300" : ""}>HIGH {$audioBands.high.toFixed(2)}</span>
+          <span class={target === "full" ? "text-primary-300" : ""}>FULL {$audioBands.full.toFixed(2)}</span>
+        </div>
       </div>
 
       <div class="flex flex-col gap-1 mt-1">
