@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy, onMount } from "svelte";
   import "../app.css";
   import AudioReactivePanel from "$lib/audio/AudioReactivePanel.svelte";
   import TransportControlPanel from "$lib/engine/TransportControlPanel.svelte";
@@ -15,6 +16,12 @@
   let autoSwitchEnabled = true;
   let quantizeMode: "beat" | "bar" = "beat";
   let seekRequestId = 0;
+  let measuredFps = 0;
+  let frameBudgetMs = 16.7;
+  let hudRafId = 0;
+  let hudLastFrameMs = 0;
+  let hudFrameCount = 0;
+  let hudSampleStartedMs = 0;
 
   let seekTo: (time: number) => void;
 
@@ -40,6 +47,32 @@
     hasSongLoaded
       ? clamp($audioRuntime.currentTime, 0, timelineDuration)
       : clamp(currentTime, 0, timelineDuration);
+  onMount(() => {
+    const sample = (timestamp: number) => {
+      hudRafId = requestAnimationFrame(sample);
+      if (!hudSampleStartedMs) hudSampleStartedMs = timestamp;
+      if (hudLastFrameMs > 0) {
+        const delta = timestamp - hudLastFrameMs;
+        if (Number.isFinite(delta) && delta > 0) frameBudgetMs = delta;
+      }
+      hudLastFrameMs = timestamp;
+      hudFrameCount += 1;
+
+      const elapsed = timestamp - hudSampleStartedMs;
+      if (elapsed >= 500) {
+        measuredFps = Math.round((hudFrameCount / elapsed) * 1000);
+        hudSampleStartedMs = timestamp;
+        hudFrameCount = 0;
+      }
+    };
+
+    hudRafId = requestAnimationFrame(sample);
+  });
+
+  onDestroy(() => {
+    if (hudRafId) cancelAnimationFrame(hudRafId);
+  });
+
 </script>
 
 <div
@@ -67,6 +100,12 @@
       >
       <span class="px-2 py-1 border border-surface-700 rounded-sm bg-surface-950"
         >Mode: Live Edit</span
+      >
+      <span
+        class="px-2 py-1 border border-primary-500/70 rounded-sm bg-primary-500/10 text-primary-300"
+        data-testid="runtime-fps-hud"
+        title="Measured browser requestAnimationFrame rate"
+        >FPS: {measuredFps || "…"} · Frame: {frameBudgetMs.toFixed(1)}ms</span
       >
     </div>
   </header>

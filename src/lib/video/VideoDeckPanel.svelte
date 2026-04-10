@@ -1,6 +1,13 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import {
+    applyVideoTimeShape,
+    evaluateAudioTrigger,
+    type VideoTimeShapeCurve,
+    type VideoTimeShapePlaybackMode,
+    type VideoTimeShapeStepMode,
+  } from "$lib/runtime/time-shaper";
+  import {
     activeSection,
     automationBounds,
     automationRuntime,
@@ -34,6 +41,14 @@
   let status = "Drop or upload clips to begin playback.";
   let envelopeGateEnabled = true;
   let speedRampEnabled = true;
+  let timeShaperEnabled = true;
+  let selectedTimeShapePresetId = "stutter-1-8";
+  let timeShaperMix = 0.82;
+  let timeShaperDepth = 0.86;
+  let timeShaperBand: "low" | "mid" | "high" | "full" = "full";
+  let timeShaperStatus = "TimeShaper armed";
+  let timeShaperLastAppliedMs = 0;
+  let timeShaperLastTriggeredAtMs: number | null = null;
   let switchSkipChancePercent = 0;
   let currentPlaybackRate = 1;
   let currentAutomationRate = 1;
@@ -49,6 +64,99 @@
   let soloLane: number | null = null;
   const speedDomainMin = 0.25;
   const speedDomainMax = 4;
+
+  interface TimeShapePreset {
+    id: string;
+    label: string;
+    shortLabel: string;
+    playbackMode: VideoTimeShapePlaybackMode;
+    mode: VideoTimeShapeStepMode;
+    cycleBeats: number;
+    yRangeBeats: number;
+    repeatWindowBeats?: number;
+    tapeStopFloor?: number;
+    points: VideoTimeShapeCurve["points"];
+  }
+
+  const timeShapePresets: TimeShapePreset[] = [
+    {
+      id: "stutter-1-8",
+      label: "1/8 Beat Stutter",
+      shortLabel: "STT 1/8",
+      playbackMode: "stutterRepeat",
+      mode: "instantStep",
+      cycleBeats: 1,
+      yRangeBeats: 0.5,
+      repeatWindowBeats: 0.125,
+      points: [
+        { x: 0, y: 0 },
+        { x: 0.24, y: -0.2 },
+        { x: 0.5, y: -0.65 },
+        { x: 0.75, y: -0.35 },
+        { x: 1, y: 0 },
+      ],
+    },
+    {
+      id: "scratch-back",
+      label: "Backspin Scratch",
+      shortLabel: "SCRATCH",
+      playbackMode: "sourceOffset",
+      mode: "instantStep",
+      cycleBeats: 2,
+      yRangeBeats: 2,
+      points: [
+        { x: 0, y: 0 },
+        { x: 0.18, y: -0.85 },
+        { x: 0.38, y: 0.2 },
+        { x: 0.58, y: -1 },
+        { x: 1, y: 0 },
+      ],
+    },
+    {
+      id: "reverse-slice",
+      label: "Reverse Slice",
+      shortLabel: "REV",
+      playbackMode: "reverse",
+      mode: "smoothStep",
+      cycleBeats: 4,
+      yRangeBeats: 0.75,
+      points: [
+        { x: 0, y: 0 },
+        { x: 0.5, y: -0.5 },
+        { x: 1, y: 0 },
+      ],
+    },
+    {
+      id: "tape-stop",
+      label: "Tape Stop",
+      shortLabel: "TAPE",
+      playbackMode: "tapeStop",
+      mode: "smoothStep",
+      cycleBeats: 4,
+      yRangeBeats: 1,
+      tapeStopFloor: 0.08,
+      points: [
+        { x: 0, y: 0 },
+        { x: 0.35, y: -0.1 },
+        { x: 0.75, y: -0.75 },
+        { x: 1, y: -1 },
+      ],
+    },
+    {
+      id: "half-time",
+      label: "Half-Time Drag",
+      shortLabel: "HALF",
+      playbackMode: "sourceOffset",
+      mode: "smoothStep",
+      cycleBeats: 4,
+      yRangeBeats: 1,
+      points: [
+        { x: 0, y: 0 },
+        { x: 0.5, y: -0.4 },
+        { x: 1, y: -0.8 },
+      ],
+    },
+  ];
   const mapNormalizedToRange = (
     normalized: number,
     min: number,
@@ -56,15 +164,24 @@
   ): number => min + Math.max(0, Math.min(1, normalized)) * (max - min);
   const clamp = (value: number, min: number, max: number): number =>
     Math.max(min, Math.min(max, value));
+  const wrapMediaTime = (value: number, mediaDuration: number): number => {
+    if (!Number.isFinite(value)) return 0;
+    if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) return Math.max(0, value);
+    const wrapped = value % mediaDuration;
+    return wrapped < 0 ? wrapped + mediaDuration : wrapped;
+  };
 
   const makeId = (): string =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
   let currentClip: VideoClip | undefined = undefined;
   let currentClipIndex = -1;
+  let currentTimeShapePreset: TimeShapePreset = timeShapePresets[0];
 
   $: currentClip = clips.find((clip) => clip.id === selectedClipId);
   $: currentClipIndex = clips.findIndex((clip) => clip.id === selectedClipId);
+  $: currentTimeShapePreset =
+    timeShapePresets.find((preset) => preset.id === selectedTimeShapePresetId) ?? timeShapePresets[0];
   const laneIsActive = (lane: number): boolean =>
     soloLane === null ? !laneMuted[lane] : soloLane === lane;
   const playableClips = (): VideoClip[] =>
@@ -224,6 +341,80 @@
     envelopeGateEnabled = !envelopeGateEnabled;
   };
 
+  const buildTimeShapeCurve = (): VideoTimeShapeCurve => ({
+    points: currentTimeShapePreset.points,
+    cycleBeats: currentTimeShapePreset.cycleBeats,
+    yRangeBeats: currentTimeShapePreset.yRangeBeats,
+    mode: currentTimeShapePreset.mode,
+    playbackMode: currentTimeShapePreset.playbackMode,
+    repeatWindowBeats: currentTimeShapePreset.repeatWindowBeats,
+    tapeStopFloor: currentTimeShapePreset.tapeStopFloor,
+    mix: timeShaperMix,
+    depth: timeShaperDepth,
+    bypass: !timeShaperEnabled,
+  });
+
+  const getBeatPosition = (): number => {
+    const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
+    return Math.max(0, (Date.now() - $tempoState.downbeatEpochMs) / 1000 / (60 / bpm));
+  };
+
+  const applyTimeShaper = () => {
+    if (!player || player.paused || !timeShaperEnabled || !duration || duration <= 0) {
+      timeShaperStatus = timeShaperEnabled ? "TimeShaper waiting" : "TimeShaper bypassed";
+      return;
+    }
+
+    const now = Date.now();
+    const audioTrigger = evaluateAudioTrigger(
+      {
+        enabled: true,
+        band: timeShaperBand,
+        threshold: $reactiveEnvelope.threshold,
+        sensitivity: $reactiveEnvelope.sensitivity,
+        detail: timeShaperDepth,
+        triggerShiftMs: 0,
+        lastTriggeredAtMs: timeShaperLastTriggeredAtMs,
+      },
+      $audioBands,
+      now,
+    );
+
+    if (audioTrigger.status === "triggered") timeShaperLastTriggeredAtMs = now;
+
+    const triggerActive =
+      audioTrigger.status === "triggered" ||
+      $audioBands.envelopeB > $reactiveEnvelope.threshold ||
+      currentTimeShapePreset.id === "half-time";
+
+    if (!triggerActive) {
+      timeShaperStatus = `TS armed · ${timeShaperBand.toUpperCase()} ${audioTrigger.score.toFixed(2)}`;
+      return;
+    }
+
+    const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
+    const secondsPerBeat = 60 / bpm;
+    const result = applyVideoTimeShape({
+      normalSourceTimeSeconds: player.currentTime || 0,
+      beatPosition: getBeatPosition(),
+      secondsPerBeat,
+      curve: buildTimeShapeCurve(),
+    });
+    const shapedTime = wrapMediaTime(result.sourceTimeSeconds, duration);
+    const delta = Math.abs(shapedTime - (player.currentTime || 0));
+    const seekThreshold = result.metadata.hardJump ? 0.01 : 0.035;
+
+    if (delta > seekThreshold && now - timeShaperLastAppliedMs > 45) {
+      player.currentTime = shapedTime;
+      timeShaperLastAppliedMs = now;
+    }
+
+    const shapedRate = Math.max(0.25, Math.min(speedDomainMax, Math.abs(result.playbackRate || 1)));
+    player.playbackRate = Math.max(0.25, Math.min(speedDomainMax, player.playbackRate * 0.75 + shapedRate * 0.25));
+    currentPlaybackRate = player.playbackRate;
+    timeShaperStatus = `${currentTimeShapePreset.shortLabel} · ${(result.mixAmount * 100).toFixed(0)}% · ${result.metadata.playbackMode}`;
+  };
+
   const applySpeedRamp = () => {
     if (!player || player.paused) return;
     const envelope = Math.max(0, Math.min(1, $audioBands.envelopeB));
@@ -304,6 +495,7 @@
 
       if (!player.paused) {
         applySpeedRamp();
+        applyTimeShaper();
         maybeQuantizedSwitch();
       }
     };
@@ -332,6 +524,7 @@
     if (player) player.playbackRate = 1;
     currentPlaybackRate = 1;
     lastStutterPulseMs = 0;
+    timeShaperLastAppliedMs = 0;
     status = "Paused";
   };
 
@@ -343,6 +536,7 @@
     player.playbackRate = 1;
     currentPlaybackRate = 1;
     lastStutterPulseMs = 0;
+    timeShaperLastAppliedMs = 0;
     currentTime = 0;
     lastQuantizeSlot = -1;
     status = "Stopped";
@@ -537,6 +731,11 @@
             >C: {Math.max(1, currentClipIndex + 1)}</span
           >
           <span
+            class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-primary-500/70 text-primary-300 rounded-sm font-mono backdrop-blur-sm"
+            data-testid="video-timeshaper-hud"
+            >{timeShaperStatus}</span
+          >
+          <span
             class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-surface-800 rounded-sm font-mono backdrop-blur-sm"
             >{$activeSection} · {currentPlaybackRate.toFixed(2)}x · S{
               currentAutomationRate.toFixed(2)
@@ -610,6 +809,54 @@
                 aria-label="Stop selected clip"
                 on:click={stop}>⏹</button
               >
+            </div>
+            <div
+              class="flex items-center gap-1 px-1 py-0.5 rounded-sm border border-surface-700 bg-surface-900"
+              data-testid="timeshaper-preset-controls"
+            >
+              <button
+                class="btn btn-sm text-[0.58rem] px-1.5 py-0.5 border font-bold {timeShaperEnabled
+                  ? 'border-primary-500 bg-primary-500/20 text-primary-400'
+                  : 'border-surface-700 bg-surface-800 text-surface-400'}"
+                on:click={() => {
+                  timeShaperEnabled = !timeShaperEnabled;
+                  if (!timeShaperEnabled) timeShaperStatus = "TimeShaper bypassed";
+                }}
+              >
+                TS {timeShaperEnabled ? "ON" : "OFF"}
+              </button>
+              <label for="timeshaper-preset" class="sr-only">TimeShaper curve preset</label>
+              <select
+                id="timeshaper-preset"
+                bind:value={selectedTimeShapePresetId}
+                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
+                aria-label="TimeShaper curve preset"
+              >
+                {#each timeShapePresets as preset}
+                  <option value={preset.id}>{preset.label}</option>
+                {/each}
+              </select>
+              <label for="timeshaper-mix" class="text-[0.52rem] text-surface-400 uppercase font-bold">Mix</label>
+              <input
+                id="timeshaper-mix"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                bind:value={timeShaperMix}
+                class="w-14 h-1 accent-primary-500"
+                aria-label="TimeShaper mix amount"
+              />
+              <select
+                bind:value={timeShaperBand}
+                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
+                aria-label="TimeShaper audio band"
+              >
+                <option value="low">LOW</option>
+                <option value="mid">MID</option>
+                <option value="high">HIGH</option>
+                <option value="full">FULL</option>
+              </select>
             </div>
             <button
               class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {envelopeGateEnabled
