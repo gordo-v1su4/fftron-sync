@@ -26,12 +26,11 @@
   } from "$lib/audio/wav";
   import type { EngineCueMarker } from "$lib/types/timeline";
   import type { ReactiveBandTarget } from "$lib/types/engine";
+  import { getEssentiaClientApiKey } from "$lib/config/essentia-env";
 
   const targets: ReactiveBandTarget[] = ["low", "mid", "high", "full"];
   const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
-  const importEnv = import.meta.env as Record<string, string | undefined>;
-  const defaultEssentiaApiKey =
-    (importEnv.VITE_ESSENTIA_API_KEY ?? importEnv.ESSENTIA_API_KEY ?? "").trim();
+  const defaultEssentiaApiKey = getEssentiaClientApiKey();
   const waveformResolution = 4096;
 
   let audioElement: HTMLAudioElement | null = null;
@@ -434,7 +433,7 @@
     if (defaultEssentiaApiKey || essentiaApiKey.trim()) {
       void runEssentiaDetection(file);
     } else {
-      status = `${status} (Essentia key not configured in env)`;
+      status = `${status} (Essentia key missing — set VITE_ESSENTIA_API_KEY or ESSENTIA_API_KEY in project .env, then restart dev / rebuild)`;
     }
   };
 
@@ -501,7 +500,8 @@
     }
     const apiKey = (essentiaApiKey.trim() || defaultEssentiaApiKey).trim();
     if (!apiKey) {
-      status = "Set VITE_ESSENTIA_API_KEY in environment to run BPM/section detection.";
+      status =
+        "Set VITE_ESSENTIA_API_KEY or ESSENTIA_API_KEY in .env to run BPM/section detection.";
       return;
     }
 
