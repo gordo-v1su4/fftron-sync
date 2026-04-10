@@ -57,7 +57,12 @@ export const runtimeCapabilities = writable<RuntimeCapabilities>({
   nativeFfmpeg: false,
   rustFfmpegFeature: false,
   selectedRenderer: 'webgl2',
-  selectedDecode: 'htmlvideo'
+  selectedDecode: 'htmlvideo',
+  hotDecks: {
+    useWebGpuHotDecks: false,
+    useVideoTimeShaper: false,
+    useDeckFrameCache: false
+  }
 });
 
 export const tempoState = writable<TempoState>({

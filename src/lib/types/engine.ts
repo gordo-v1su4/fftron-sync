@@ -6,6 +6,12 @@ export type TempoSource = 'manual' | 'tap' | 'link' | 'midi_clock' | 'auto';
 export type AudioInputSource = 'none' | 'file' | 'mic';
 export type ReactiveBandTarget = 'low' | 'mid' | 'high' | 'full';
 
+export interface HotDeckFeatureFlags {
+  useWebGpuHotDecks: boolean;
+  useVideoTimeShaper: boolean;
+  useDeckFrameCache: boolean;
+}
+
 export interface RuntimeCapabilities {
   webgl2: boolean;
   webgpu: boolean;
@@ -14,6 +20,7 @@ export interface RuntimeCapabilities {
   rustFfmpegFeature: boolean;
   selectedRenderer: RendererBackend;
   selectedDecode: DecodeBackend;
+  hotDecks: HotDeckFeatureFlags;
 }
 
 export interface TempoState {

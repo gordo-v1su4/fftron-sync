@@ -33,6 +33,15 @@
 - `RendererBackend`: `webgl2 | webgpu`
 - `TempoSource`: `manual | tap | link | midi_clock | auto`
 
+## Hot deck runtime (planned contract)
+
+See `docs/interfaces/hot-deck-runtime-api.md` for the Phase 0 API contract and code-quality review baseline for the MasterSelects-inspired WebGPU hot deck refactor. Any future Tauri command/event expansion must preserve these invariants:
+
+- Rust quantized scheduling remains the timing authority for `scheduledBoundaryMs`.
+- Frontend/WebGPU telemetry must classify every switch as `hot`, `warm`, `coldFallback`, or `failed`.
+- Hot readiness requires a retained presentable frame/proxy/pre-render handle before the scheduled boundary.
+- Runtime stores carry serializable metadata only; GPU/video/decode handles remain service-owned and releasable.
+
 ## Native FFmpeg fallback
 
 `native_ffmpeg` is available when:
