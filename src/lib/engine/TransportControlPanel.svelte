@@ -22,6 +22,7 @@
     scheduledActions,
     tempoState,
   } from "$lib/stores/runtime";
+  import { describeRuntimeCapabilityTruth } from "$lib/engine/runtimeCapabilityStatus";
   import type { DecodeBackend, RendererBackend } from "$lib/types/engine";
   import type { QuantizeGrid } from "$lib/types/timeline";
 
@@ -36,6 +37,7 @@
   let bpmInput = 120;
   let selectedGrid: QuantizeGrid = "1/4n";
   let status = "Idle";
+  let capabilityTruth = describeRuntimeCapabilityTruth($runtimeCapabilities);
 
   const getErrorMessage = (error: unknown): string =>
     error instanceof Error ? error.message : "unknown error";
@@ -86,7 +88,12 @@
       const backend = (event.currentTarget as HTMLSelectElement)
         .value as DecodeBackend;
       runtimeCapabilities.set(await setDecodeBackend(backend));
-      status = `Decode backend set to ${backend}`;
+      status =
+        backend === "webcodecs"
+          ? "Decode preference set to WebCodecs probe only; live deck playback still needs telemetry-backed integration."
+          : backend === "native_ffmpeg"
+            ? "Decode backend set to native_ffmpeg desktop path."
+            : "Decode backend active: HTMLVideo fallback.";
     } catch (error) {
       status = `Set decode backend failed: ${getErrorMessage(error)}`;
     }
@@ -97,7 +104,10 @@
       const backend = (event.currentTarget as HTMLSelectElement)
         .value as RendererBackend;
       runtimeCapabilities.set(await setRendererBackend(backend));
-      status = `Renderer backend set to ${backend}`;
+      status =
+        backend === "webgpu"
+          ? "Renderer preference set to WebGPU probe only; hot-deck rendering stays capability-gated until telemetry-backed integration lands."
+          : "Renderer active: WebGL2 fallback.";
     } catch (error) {
       status = `Set renderer backend failed: ${getErrorMessage(error)}`;
     }
@@ -146,6 +156,7 @@
   });
 
   $: bpmInput = Math.round($tempoState.bpm * 100) / 100;
+  $: capabilityTruth = describeRuntimeCapabilityTruth($runtimeCapabilities);
 </script>
 
 <div
@@ -289,6 +300,18 @@
         class="bg-primary-500/20 text-primary-500 border border-primary-500 hover:bg-primary-500 hover:text-surface-950 px-1.5 py-0.5 rounded-sm font-bold ml-auto"
         on:click={refresh}>Refresh</button
       >
+      <span
+        class="px-1.5 py-0.5 rounded-sm border border-surface-700 bg-surface-900 text-surface-300 font-mono"
+        title="Browser/WebView capability probe only"
+      >
+        WGPU {$runtimeCapabilities.webgpu ? "probe" : "no"}
+      </span>
+      <span
+        class="px-1.5 py-0.5 rounded-sm border border-surface-700 bg-surface-900 text-surface-300 font-mono"
+        title="Browser/WebView capability probe only"
+      >
+        WCDC {$runtimeCapabilities.webcodecs ? "probe" : "no"}
+      </span>
     </div>
   </div>
 
@@ -325,6 +348,13 @@
           ? `${($detectedTempo.confidence * 100).toFixed(0)}%`
           : "N/A"}</span
       >
+    </div>
+    <div class="flex justify-between gap-2">
+      <span>{capabilityTruth.rendererSummary}</span>
+      <span>{capabilityTruth.decodeSummary}</span>
+    </div>
+    <div class="text-[0.52rem] text-surface-400 normal-case tracking-normal">
+      {capabilityTruth.integrationNote}
     </div>
   </div>
 </div>
