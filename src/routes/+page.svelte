@@ -10,6 +10,7 @@
     timelineSeekRequest,
     waveformOverview,
   } from "$lib/stores/runtime";
+  import { startVideoDeckAuthorityScheduler } from "$lib/runtime/decks/videoDeckAuthority";
 
   let duration = 0;
   let currentTime = 0;
@@ -22,6 +23,7 @@
   let hudLastFrameMs = 0;
   let hudFrameCount = 0;
   let hudSampleStartedMs = 0;
+  let stopVideoDeckAuthority = () => {};
 
   let seekTo: (time: number) => void;
 
@@ -48,6 +50,8 @@
       ? clamp($audioRuntime.currentTime, 0, timelineDuration)
       : clamp(currentTime, 0, timelineDuration);
   onMount(() => {
+    stopVideoDeckAuthority = startVideoDeckAuthorityScheduler();
+
     const sample = (timestamp: number) => {
       hudRafId = requestAnimationFrame(sample);
       if (!hudSampleStartedMs) hudSampleStartedMs = timestamp;
@@ -71,6 +75,7 @@
 
   onDestroy(() => {
     if (hudRafId) cancelAnimationFrame(hudRafId);
+    stopVideoDeckAuthority();
   });
 
 </script>

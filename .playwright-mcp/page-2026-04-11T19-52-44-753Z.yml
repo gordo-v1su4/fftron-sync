@@ -1,0 +1,411 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - heading "FFTRON Sync Console" [level=1] [ref=e6]
+      - paragraph [ref=e7]: "Desktop-first live engine: Rust clock authority, reactive clip matrix, quantized execution."
+    - generic [ref=e8]:
+      - generic [ref=e9]: "Clock: Rust"
+      - generic [ref=e10]: "Mode: Live Edit"
+      - generic "Measured browser requestAnimationFrame rate" [ref=e11]: "FPS: … · Frame: 16.7ms"
+  - generic [ref=e12]:
+    - generic [ref=e13]:
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - heading "Transport + Runtime" [level=2] [ref=e17]
+          - paragraph [ref=e18]: Runtime state synced
+        - generic [ref=e19]:
+          - generic [ref=e20]:
+            - generic [ref=e21]: BPM
+            - spinbutton "BPM" [ref=e22]: "120"
+            - button "Set" [ref=e23] [cursor=pointer]
+            - button "Tap" [ref=e24] [cursor=pointer]
+            - button "-0.1" [ref=e25] [cursor=pointer]
+            - button "+0.1" [ref=e26] [cursor=pointer]
+            - button "Resync" [ref=e27] [cursor=pointer]
+            - generic [ref=e28]: DET --
+          - generic [ref=e29]:
+            - generic [ref=e30]: Qtz
+            - combobox "Qtz" [ref=e31]:
+              - option "1n"
+              - option "1/2n"
+              - option "1/4n" [selected]
+              - option "1/8n"
+              - option "1/16n"
+            - button "Apply" [ref=e32] [cursor=pointer]
+            - button "Preview" [ref=e33] [cursor=pointer]
+            - button "Markers" [ref=e34] [cursor=pointer]
+            - button "Pop" [ref=e35] [cursor=pointer]
+          - generic [ref=e36]:
+            - generic [ref=e37]: Rndr
+            - combobox "Rndr" [ref=e38]:
+              - option "htmlvideo" [selected]
+              - option "webcodecs"
+              - option "native_ffmpeg" [disabled]
+            - generic [ref=e39]: GPU
+            - combobox "GPU" [ref=e40]:
+              - option "webgl2" [selected]
+              - option "webgpu"
+            - button "Refresh" [ref=e41] [cursor=pointer]
+            - generic "Browser/WebView capability probe only" [ref=e42]: WGPU probe
+            - generic "Browser/WebView capability probe only" [ref=e43]: WCDC probe
+        - generic [ref=e44]:
+          - generic [ref=e45]:
+            - generic [ref=e46]: "BPM 120.00 [manual] Conf: 1.00 Taps: 0"
+            - generic [ref=e47]: "Sec:"
+          - generic [ref=e48]:
+            - generic [ref=e49]: "FFmpeg: No Rust: No"
+            - generic [ref=e50]: "Queue: 0"
+          - generic [ref=e51]:
+            - generic [ref=e52]: "Detected BPM: N/A"
+            - generic [ref=e53]: "Detected Conf: N/A"
+          - generic [ref=e54]:
+            - generic [ref=e55]: "Renderer active: WebGL2 fallback"
+            - generic [ref=e56]: "Decode active: HTMLVideo fallback"
+          - generic [ref=e57]: Current live deck path remains the HTMLVideo/WebGL2 fallback.
+      - generic [ref=e59]:
+        - generic [ref=e60]:
+          - heading "Video Matrix" [level=2] [ref=e61]
+          - paragraph [ref=e62]: "Holding switch: awaiting analyzed onsets"
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - generic [ref=e65]:
+              - generic [ref=e66]: L3
+              - generic [ref=e67]:
+                - button "Mute layer 3" [ref=e68] [cursor=pointer]: M
+                - button "Solo layer 3" [ref=e69] [cursor=pointer]: S
+            - generic [ref=e70]:
+              - button "Empty slot 1 on layer 3" [ref=e71] [cursor=pointer]:
+                - generic [ref=e72]: ·
+              - button "Empty slot 2 on layer 3" [ref=e73] [cursor=pointer]:
+                - generic [ref=e74]: ·
+              - button "Empty slot 3 on layer 3" [ref=e75] [cursor=pointer]:
+                - generic [ref=e76]: ·
+              - button "Empty slot 4 on layer 3" [ref=e77] [cursor=pointer]:
+                - generic [ref=e78]: ·
+              - button "Empty slot 5 on layer 3" [ref=e79] [cursor=pointer]:
+                - generic [ref=e80]: ·
+              - button "Empty slot 6 on layer 3" [ref=e81] [cursor=pointer]:
+                - generic [ref=e82]: ·
+              - button "Empty slot 7 on layer 3" [ref=e83] [cursor=pointer]:
+                - generic [ref=e84]: ·
+              - button "Empty slot 8 on layer 3" [ref=e85] [cursor=pointer]:
+                - generic [ref=e86]: ·
+              - button "Empty slot 9 on layer 3" [ref=e87] [cursor=pointer]:
+                - generic [ref=e88]: ·
+              - button "Empty slot 10 on layer 3" [ref=e89] [cursor=pointer]:
+                - generic [ref=e90]: ·
+              - button "Empty slot 11 on layer 3" [ref=e91] [cursor=pointer]:
+                - generic [ref=e92]: ·
+              - button "Empty slot 12 on layer 3" [ref=e93] [cursor=pointer]:
+                - generic [ref=e94]: ·
+              - button "Empty slot 13 on layer 3" [ref=e95] [cursor=pointer]:
+                - generic [ref=e96]: ·
+              - button "Empty slot 14 on layer 3" [ref=e97] [cursor=pointer]:
+                - generic [ref=e98]: ·
+          - generic [ref=e99]:
+            - generic [ref=e100]:
+              - generic [ref=e101]: L2
+              - generic [ref=e102]:
+                - button "Mute layer 2" [ref=e103] [cursor=pointer]: M
+                - button "Solo layer 2" [ref=e104] [cursor=pointer]: S
+            - generic [ref=e105]:
+              - button "Empty slot 1 on layer 2" [ref=e106] [cursor=pointer]:
+                - generic [ref=e107]: ·
+              - button "Empty slot 2 on layer 2" [ref=e108] [cursor=pointer]:
+                - generic [ref=e109]: ·
+              - button "Empty slot 3 on layer 2" [ref=e110] [cursor=pointer]:
+                - generic [ref=e111]: ·
+              - button "Empty slot 4 on layer 2" [ref=e112] [cursor=pointer]:
+                - generic [ref=e113]: ·
+              - button "Empty slot 5 on layer 2" [ref=e114] [cursor=pointer]:
+                - generic [ref=e115]: ·
+              - button "Empty slot 6 on layer 2" [ref=e116] [cursor=pointer]:
+                - generic [ref=e117]: ·
+              - button "Empty slot 7 on layer 2" [ref=e118] [cursor=pointer]:
+                - generic [ref=e119]: ·
+              - button "Empty slot 8 on layer 2" [ref=e120] [cursor=pointer]:
+                - generic [ref=e121]: ·
+              - button "Empty slot 9 on layer 2" [ref=e122] [cursor=pointer]:
+                - generic [ref=e123]: ·
+              - button "Empty slot 10 on layer 2" [ref=e124] [cursor=pointer]:
+                - generic [ref=e125]: ·
+              - button "Empty slot 11 on layer 2" [ref=e126] [cursor=pointer]:
+                - generic [ref=e127]: ·
+              - button "Empty slot 12 on layer 2" [ref=e128] [cursor=pointer]:
+                - generic [ref=e129]: ·
+              - button "Empty slot 13 on layer 2" [ref=e130] [cursor=pointer]:
+                - generic [ref=e131]: ·
+              - button "Empty slot 14 on layer 2" [ref=e132] [cursor=pointer]:
+                - generic [ref=e133]: ·
+          - generic [ref=e134]:
+            - generic [ref=e135]:
+              - generic [ref=e136]: L1
+              - generic [ref=e137]:
+                - button "Mute layer 1" [ref=e138] [cursor=pointer]: M
+                - button "Solo layer 1" [ref=e139] [cursor=pointer]: S
+            - generic [ref=e140]:
+              - button "Empty slot 1 on layer 1" [ref=e141] [cursor=pointer]:
+                - generic [ref=e142]: ·
+              - button "Empty slot 2 on layer 1" [ref=e143] [cursor=pointer]:
+                - generic [ref=e144]: ·
+              - button "Empty slot 3 on layer 1" [ref=e145] [cursor=pointer]:
+                - generic [ref=e146]: ·
+              - button "Empty slot 4 on layer 1" [ref=e147] [cursor=pointer]:
+                - generic [ref=e148]: ·
+              - button "Empty slot 5 on layer 1" [ref=e149] [cursor=pointer]:
+                - generic [ref=e150]: ·
+              - button "Empty slot 6 on layer 1" [ref=e151] [cursor=pointer]:
+                - generic [ref=e152]: ·
+              - button "Empty slot 7 on layer 1" [ref=e153] [cursor=pointer]:
+                - generic [ref=e154]: ·
+              - button "Empty slot 8 on layer 1" [ref=e155] [cursor=pointer]:
+                - generic [ref=e156]: ·
+              - button "Empty slot 9 on layer 1" [ref=e157] [cursor=pointer]:
+                - generic [ref=e158]: ·
+              - button "Empty slot 10 on layer 1" [ref=e159] [cursor=pointer]:
+                - generic [ref=e160]: ·
+              - button "Empty slot 11 on layer 1" [ref=e161] [cursor=pointer]:
+                - generic [ref=e162]: ·
+              - button "Empty slot 12 on layer 1" [ref=e163] [cursor=pointer]:
+                - generic [ref=e164]: ·
+              - button "Empty slot 13 on layer 1" [ref=e165] [cursor=pointer]:
+                - generic [ref=e166]: ·
+              - button "Empty slot 14 on layer 1" [ref=e167] [cursor=pointer]:
+                - generic [ref=e168]: ·
+        - generic:
+          - generic [ref=e169]:
+            - generic [ref=e170]:
+              - generic [ref=e171]: Upload lane
+              - combobox "Upload lane" [ref=e172]:
+                - option "L1"
+                - option "L2"
+                - option "L3"
+              - generic [ref=e173] [cursor=pointer]: Add
+            - generic [ref=e174]: No clips
+          - generic [ref=e176]:
+            - generic:
+              - generic: "C: 1"
+              - generic "Live TimeShaper status. Preset curves below remap the selected video clip's source time while it remains the one visible deck.": TimeShaper armed
+              - generic: · 1.00x · S1.00x · T0%
+            - generic: NO SIGNAL
+            - generic [ref=e178]:
+              - generic [ref=e179]:
+                - button "Play selected clip" [ref=e180] [cursor=pointer]: ▶
+                - button "Pause selected clip" [ref=e181] [cursor=pointer]: ⏸
+                - button "Stop selected clip" [ref=e182] [cursor=pointer]: ⏹
+              - generic [ref=e183]:
+                - button "TS ON" [ref=e184] [cursor=pointer]
+                - generic [ref=e185]: TimeShaper curve preset
+                - combobox "TimeShaper curve preset" [ref=e186]:
+                  - option "1/8 Beat Stutter" [selected]
+                  - option "Backspin Scratch"
+                  - option "Reverse Slice"
+                  - option "Tape Stop"
+                  - option "Half-Time Drag"
+                - img "Visible TimeShaper preset curve" [ref=e187]
+                - generic [ref=e190]: Mix
+                - slider "TimeShaper mix amount" [ref=e191]: "0.82"
+                - generic "TimeShaper trigger range" [ref=e192]: FX 20Hz–14kHz
+                - generic "Accumulated onsets for the current clip. Filled dots and bar show progress toward the switch target." [ref=e193]:
+                  - generic [ref=e194]: 0/4
+                  - meter "Accumulated onsets before next clip" [ref=e200]
+                - generic [ref=e201]: Onsets
+                - spinbutton "Onsets before next clip" [ref=e202]: "4"
+              - button "GATE ON" [ref=e203] [cursor=pointer]
+              - button "RAMP ON" [ref=e204] [cursor=pointer]
+              - generic [ref=e205]:
+                - generic [ref=e206]: Skip
+                - slider "Random quantized switch bypass probability" [ref=e207]: "0"
+                - spinbutton "Skip chance percent" [ref=e208]: "0"
+                - generic [ref=e209]: "0.00"
+    - generic [ref=e212]:
+      - generic [ref=e213]:
+        - heading "Audio Reactive Analyzer" [level=2] [ref=e214]
+        - paragraph [ref=e215]: Load a song (or mic) to drive FFT and envelopes.
+      - generic [ref=e217]:
+        - generic [ref=e218]:
+          - generic [ref=e219] [cursor=pointer]: Load Song
+          - button "Mic In" [ref=e220] [cursor=pointer]
+        - generic [ref=e221]:
+          - generic [ref=e222]: Essentia Auto
+          - generic [ref=e223]: No env key
+          - button "Re-Detect BPM+Sections" [disabled] [ref=e224]
+        - generic [ref=e225]:
+          - generic [ref=e226]: BPM Detected
+          - generic [ref=e227]: Waiting for detection
+        - generic [ref=e228]: No track loaded
+        - generic [ref=e229]:
+          - generic [ref=e230]: "120.00"
+          - button "Play audio track" [ref=e231] [cursor=pointer]: ▶
+          - button "Pause audio track" [ref=e232] [cursor=pointer]: ⏸
+          - button "Stop audio track" [ref=e233] [cursor=pointer]: ⏹
+          - generic [ref=e234]: 0.0 / 0.0s
+        - generic [ref=e235]:
+          - generic [ref=e236]:
+            - generic [ref=e237]:
+              - generic [ref=e238]: Effect Range
+              - generic [ref=e239]: FULL · 20 Hz – 14 kHz
+            - generic [ref=e240]:
+              - button "Low" [ref=e241] [cursor=pointer]
+              - button "Mid" [ref=e242] [cursor=pointer]
+              - button "High" [ref=e243] [cursor=pointer]
+              - button "Full" [pressed] [ref=e244] [cursor=pointer]
+          - generic [ref=e245]: Attk
+          - spinbutton "Attk" [ref=e246]: "27"
+          - generic [ref=e247]: Rel
+          - spinbutton "Rel" [ref=e248]: "190"
+        - generic [ref=e249]:
+          - generic [ref=e250]: Thr
+          - slider "Thr" [ref=e251]: "0.12"
+          - generic [ref=e252]: Sens
+          - slider "Sens" [ref=e253]: "1"
+        - 'generic "FFT analyzer: the smoothed curve shows captured spectrum energy, Low/Mid/High regions stay labeled, and the highlighted frequency span drives the live effect envelope." [ref=e254]':
+          - generic [ref=e255]:
+            - generic [ref=e256]: FFT Analyzer
+            - generic [ref=e257]: 20 Hz – 14 kHz · Thr 0.12
+          - generic [ref=e258]:
+            - generic [ref=e259]:
+              - generic [ref=e261]: Low
+              - generic [ref=e263]: Mid
+              - generic [ref=e265]: High
+            - img [ref=e268]
+            - generic: 20 Hz
+            - generic: 14 kHz
+          - generic [ref=e269]:
+            - generic [ref=e270]:
+              - generic [ref=e271]: LOW 0.00
+              - generic [ref=e272]: MID 0.00
+              - generic [ref=e273]: HIGH 0.00
+              - generic [ref=e274]: FULL 0.00
+            - generic [ref=e275]: DRV 0.00
+          - generic [ref=e276]:
+            - generic [ref=e277]:
+              - generic [ref=e278]: Effect span
+              - generic [ref=e279]: 20 Hz – 14 kHz
+            - generic [ref=e280]:
+              - slider "Effect range start frequency" [ref=e283]: "0"
+              - slider "Effect range end frequency" [ref=e284]: "100"
+            - generic [ref=e285]:
+              - generic [ref=e286]: 20 Hz
+              - generic [ref=e287]: 14 kHz
+        - generic [ref=e288]:
+          - 'generic "Authoritative onset transport state: analyzed markers remain authoritative, fallback is labeled, and armed/holding states stay explicit." [ref=e289]':
+            - generic [ref=e290]: Waiting for count
+            - generic [ref=e291]: Detected fallback · 0/4
+          - generic [ref=e293]: Env A
+          - generic [ref=e296]: Env B
+        - generic [ref=e298]:
+          - generic [ref=e299]: SPD
+          - spinbutton "Speed minimum" [ref=e300]: "0.5"
+          - generic [ref=e301]: MAX
+          - spinbutton "Speed maximum" [ref=e302]: "2.1"
+          - generic [ref=e303]: STT
+          - spinbutton "Stutter minimum" [ref=e304]: "0"
+          - generic [ref=e305]: MAX
+          - spinbutton "Stutter maximum" [ref=e306]: "1"
+        - generic [ref=e307]:
+          - heading "Signal Gate" [level=3] [ref=e308]
+          - generic [ref=e309]:
+            - generic [ref=e311]: L
+            - generic [ref=e314]: M
+            - generic [ref=e317]: H
+            - generic [ref=e320]: F
+          - generic [ref=e322]: PEAK OFF
+  - generic [ref=e324]:
+    - generic [ref=e325]:
+      - generic [ref=e326]:
+        - heading "Master Timeline" [level=3] [ref=e327]
+        - generic [ref=e328]: 00:00 / 00:00
+        - generic [ref=e329]: No WAV waveform loaded
+      - generic [ref=e330]:
+        - generic [ref=e332]: No detected sections
+        - generic [ref=e333]:
+          - button "Auto On" [pressed] [ref=e334] [cursor=pointer]
+          - button "Beat" [pressed] [ref=e335] [cursor=pointer]
+          - button "Bar" [ref=e336] [cursor=pointer]
+        - generic [ref=e337]:
+          - button "-" [ref=e338] [cursor=pointer]
+          - button "x1" [ref=e339] [cursor=pointer]
+          - button "+" [ref=e340] [cursor=pointer]
+        - generic [ref=e341]:
+          - button "◀" [ref=e342] [cursor=pointer]
+          - button "Follow" [ref=e343] [cursor=pointer]
+          - button "▶" [ref=e344] [cursor=pointer]
+        - generic [ref=e345]:
+          - generic [ref=e346]: SPD 0.63x
+          - generic [ref=e347]: STT 10%
+    - generic [ref=e348]:
+      - generic:
+        - generic:
+          - generic: 00:00.00
+      - slider "Timeline scrub position" [ref=e349]: "0"
+      - generic [ref=e350]:
+        - generic [ref=e351]:
+          - generic [ref=e352]: A1 Waveform
+          - generic [ref=e353]:
+            - button "Solo waveform lane" [ref=e354] [cursor=pointer]: S
+            - button "Mute waveform lane" [ref=e355] [cursor=pointer]: M
+        - generic [ref=e356]:
+          - img [ref=e358]
+          - generic [ref=e362]: Analyzed main lane
+          - generic "Approximate onset threshold guide"
+          - generic [ref=e363]: Load a WAV file in Audio Reactive Analyzer to visualize waveform
+      - generic [ref=e364]:
+        - generic [ref=e365]:
+          - generic [ref=e366]: STUTTER
+          - generic [ref=e367]: Envelope Lane
+          - generic [ref=e368]:
+            - button "Solo stutter lane" [ref=e369] [cursor=pointer]: S
+            - button "Mute stutter lane" [ref=e370] [cursor=pointer]: M
+        - generic [ref=e371]:
+          - generic [ref=e372]:
+            - combobox [ref=e373]:
+              - option "Manual" [selected]
+              - option "Rise + Drop"
+              - option "Chop Gate"
+            - combobox [ref=e374]:
+              - option "linear"
+              - option "smooth" [selected]
+              - option "ease in"
+              - option "ease out"
+              - option "step"
+            - button "Reset" [ref=e375] [cursor=pointer]
+          - img [ref=e376]
+          - button "Adjust stutter control point 1" [ref=e379] [cursor=pointer]
+          - button "Adjust stutter control point 2" [ref=e380] [cursor=pointer]
+          - button "Adjust stutter control point 3" [ref=e381] [cursor=pointer]
+          - button "Adjust stutter control point 4" [ref=e382] [cursor=pointer]
+          - button "Adjust stutter control point 5" [ref=e383] [cursor=pointer]
+          - button "Adjust stutter control point 6" [ref=e384] [cursor=pointer]
+          - button "Adjust stutter control point 7" [ref=e385] [cursor=pointer]
+          - button "Adjust stutter control point 8" [ref=e386] [cursor=pointer]
+          - button "Adjust stutter control point 9" [ref=e387] [cursor=pointer]
+      - generic [ref=e388]:
+        - generic [ref=e389]:
+          - generic [ref=e390]: SPEED
+          - generic [ref=e391]: Ramp
+          - generic [ref=e392]:
+            - button "Solo speed lane" [ref=e393] [cursor=pointer]: S
+            - button "Mute speed lane" [ref=e394] [cursor=pointer]: M
+        - generic [ref=e395]:
+          - generic [ref=e396]:
+            - combobox [ref=e397]:
+              - option "Manual" [selected]
+              - option "Rise + Drop"
+              - option "Chop Gate"
+            - combobox [ref=e398]:
+              - option "linear"
+              - option "smooth"
+              - option "ease in" [selected]
+              - option "ease out"
+              - option "step"
+            - button "Reset" [ref=e399] [cursor=pointer]
+          - img [ref=e400]
+          - button "Adjust speed control point 1" [ref=e403] [cursor=pointer]
+          - button "Adjust speed control point 2" [ref=e404] [cursor=pointer]
+          - button "Adjust speed control point 3" [ref=e405] [cursor=pointer]
+          - button "Adjust speed control point 4" [ref=e406] [cursor=pointer]
+          - button "Adjust speed control point 5" [ref=e407] [cursor=pointer]
+          - button "Adjust speed control point 6" [ref=e408] [cursor=pointer]
+          - button "Adjust speed control point 7" [ref=e409] [cursor=pointer]
+          - button "Adjust speed control point 8" [ref=e410] [cursor=pointer]

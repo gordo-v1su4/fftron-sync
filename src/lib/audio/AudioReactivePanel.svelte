@@ -8,11 +8,15 @@
     audioRuntime,
     detectedTempo,
     essentiaAnalysis,
+    liveDetectedOnsets,
     markers,
+    onsetTransportState,
     reactiveEnvelope,
     tempoState,
     timelineSeekRequest,
+    transportAlignment,
     waveformOverview,
+    switchProgressEvents,
   } from "$lib/stores/runtime";
   import {
     analyzeEssentiaFull,
@@ -25,17 +29,44 @@
     extractWaveformOverview,
     isLikelyWavFile,
   } from "$lib/audio/wav";
+  import {
+    clampFrequencyRange,
+    describeEffectRangeRouting,
+    derivePresetTarget,
+    EFFECT_RANGE_MAX_HZ,
+    EFFECT_RANGE_MIN_HZ,
+    findPresetById,
+    formatFrequency,
+    FREQUENCY_PRESETS,
+    frequencyToPercent,
+    MIN_EFFECT_RANGE_GAP_PERCENT,
+    moveEffectRangeHandle,
+    normalizeEffectRangePercents,
+    nudgeEffectRangeHandle,
+    percentToFrequency,
+    percentFromPointer,
+    resolveNearestEffectRangeHandle,
+    type FrequencyRange,
+    type EffectRangeHandle,
+  } from "$lib/audio/frequencyRange";
+  import {
+    SPEED_AUTOMATION_DOMAIN,
+    clampValue,
+  } from "$lib/runtime/automationBounds";
+  import { describeOnsetTransportState } from "$lib/audio/onsetTransportStatus";
   import type { EngineCueMarker } from "$lib/types/timeline";
   import type { ReactiveBandTarget } from "$lib/types/engine";
   import { getEssentiaClientApiKey } from "$lib/config/essentia-env";
 
-  const targets: ReactiveBandTarget[] = ["low", "mid", "high", "full"];
-  const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
   const defaultEssentiaApiKey = getEssentiaClientApiKey();
   const waveformResolution = 4096;
+  const spectrumPathWidth = 640;
+  const spectrumPathHeight = 136;
+  const spectrumBarCount = 48;
 
   let audioElement: HTMLAudioElement | null = null;
   let fileInput: HTMLInputElement | null = null;
+  let rangeSelectorTrackEl: HTMLDivElement | null = null;
   let context: AudioContext | null = null;
   let analyser: AnalyserNode | null = null;
   let monitorGain: GainNode | null = null;
@@ -45,7 +76,7 @@
   let rafId = 0;
   let lastFrameMs = 0;
   let fftData: Uint8Array | null = null;
-  let spectrumBars: number[] = Array.from({ length: 32 }, () => 0);
+  let spectrumBars: number[] = Array.from({ length: spectrumBarCount }, () => 0);
   let onsetWasOpen = false;
   let lastDetectedOnsetMs = 0;
   let loadedTrackUrl = "";
@@ -56,6 +87,10 @@
   let detectionRequestId = 0;
 
   let target: ReactiveBandTarget = "full";
+  let effectRangeStartHz = EFFECT_RANGE_MIN_HZ;
+  let effectRangeEndHz = EFFECT_RANGE_MAX_HZ;
+  let rangeStartPercent = 0;
+  let rangeEndPercent = 100;
   let attackMs = 27;
   let releaseMs = 190;
   let threshold = 0.12;
@@ -64,12 +99,30 @@
   let speedMaxValue = 2.1;
   let stutterMinValue = 0;
   let stutterMaxValue = 1;
-  const speedDomainMin = 0.25;
-  const speedDomainMax = 4;
+  const speedDomainMin = SPEED_AUTOMATION_DOMAIN.min;
+  const speedDomainMax = SPEED_AUTOMATION_DOMAIN.max;
 
   let envelopeA = 0;
   let envelopeB = 0;
   let lastHandledSeekRequestId = 0;
+  let spectrumCurvePath = "";
+  let spectrumAreaPath = "";
+  let selectedRangeLabel = "";
+  let selectedRangeRouting = describeEffectRangeRouting({
+    startHz: EFFECT_RANGE_MIN_HZ,
+    endHz: EFFECT_RANGE_MAX_HZ,
+  });
+  let activeRangeHandle: EffectRangeHandle | null = null;
+  let rangePointerCleanup: (() => void) | null = null;
+  let activeRangeRect: { left: number; width: number } | null = null;
+  let onsetTransportPresentation = describeOnsetTransportState({
+    progressCount: 0,
+    target: 4,
+    armed: false,
+    blockedReason: null,
+    progressMode: "analyzed",
+    lastTransportSlot: null,
+  });
 
   const normalizeSectionLabel = (label: string): string => {
     const clean = label
@@ -138,9 +191,305 @@
     }
   };
 
+  const buildSpectrumPaths = (values: number[]) => {
+    if (values.length === 0) {
+      return {
+        curve: "",
+        area: "",
+      };
+    }
+
+    const points = values.map((value, index) => {
+      const x =
+        values.length === 1
+          ? spectrumPathWidth / 2
+          : (index / (values.length - 1)) * spectrumPathWidth;
+      const y = spectrumPathHeight - clampValue(value, 0, 1) * spectrumPathHeight;
+      return { x, y };
+    });
+
+    if (points.length === 1) {
+      const point = points[0];
+      return {
+        curve: `M ${point.x} ${point.y}`,
+        area: `M ${point.x} ${spectrumPathHeight} L ${point.x} ${point.y} L ${point.x} ${spectrumPathHeight} Z`,
+      };
+    }
+
+    let curve = `M ${points[0].x} ${points[0].y}`;
+    for (let index = 1; index < points.length - 1; index += 1) {
+      const current = points[index];
+      const next = points[index + 1];
+      const midpointX = (current.x + next.x) / 2;
+      const midpointY = (current.y + next.y) / 2;
+      curve += ` Q ${current.x} ${current.y} ${midpointX} ${midpointY}`;
+    }
+    const lastControl = points[points.length - 2];
+    const lastPoint = points[points.length - 1];
+    curve += ` Q ${lastControl.x} ${lastControl.y} ${lastPoint.x} ${lastPoint.y}`;
+
+    return {
+      curve,
+      area: `${curve} L ${spectrumPathWidth} ${spectrumPathHeight} L 0 ${spectrumPathHeight} Z`,
+    };
+  };
+
+  const syncEffectRange = (nextRange: FrequencyRange) => {
+    const normalized = clampFrequencyRange(nextRange.startHz, nextRange.endHz);
+    effectRangeStartHz = normalized.startHz;
+    effectRangeEndHz = normalized.endHz;
+    rangeStartPercent = frequencyToPercent(normalized.startHz);
+    rangeEndPercent = frequencyToPercent(normalized.endHz);
+    target = derivePresetTarget(normalized);
+  };
+
+  const applyEffectRangeFromPercents = (startPercent: number, endPercent: number) => {
+    const normalizedPercents = normalizeEffectRangePercents(
+      startPercent,
+      endPercent,
+      MIN_EFFECT_RANGE_GAP_PERCENT,
+    );
+    const orderedStart = normalizedPercents.startPercent;
+    const orderedEnd = normalizedPercents.endPercent;
+    syncEffectRange({
+      startHz: percentToFrequency(orderedStart),
+      endHz: percentToFrequency(orderedEnd),
+    });
+    applyEnvelopeSettings();
+  };
+
+  const updateEffectRangeHandle = (
+    handle: EffectRangeHandle,
+    nextPercent: number,
+  ) => {
+    const normalized = moveEffectRangeHandle(
+      {
+        startPercent: rangeStartPercent,
+        endPercent: rangeEndPercent,
+      },
+      handle,
+      nextPercent,
+      MIN_EFFECT_RANGE_GAP_PERCENT,
+    );
+    applyEffectRangeFromPercents(
+      normalized.startPercent,
+      normalized.endPercent,
+    );
+  };
+
+  const selectPresetRange = (presetId: ReactiveBandTarget) => {
+    const preset = findPresetById(presetId);
+    syncEffectRange({
+      startHz: preset.startHz,
+      endHz: preset.endHz,
+    });
+    applyEnvelopeSettings();
+  };
+
+  const handleRangeStartInput = (event: Event) => {
+    updateEffectRangeHandle(
+      "start",
+      (event.currentTarget as HTMLInputElement).valueAsNumber,
+    );
+  };
+
+  const handleRangeEndInput = (event: Event) => {
+    updateEffectRangeHandle(
+      "end",
+      (event.currentTarget as HTMLInputElement).valueAsNumber,
+    );
+  };
+
+  const getRangePercentFromClientX = (
+    clientX: number,
+    rect = activeRangeRect,
+  ): number | null => {
+    if (!rect || rect.width <= 0) return null;
+    return percentFromPointer(clientX, rect.left, rect.width);
+  };
+
+  const stopRangePointerDrag = () => {
+    rangePointerCleanup?.();
+    rangePointerCleanup = null;
+    activeRangeHandle = null;
+    activeRangeRect = null;
+  };
+
+  const beginRangePointerDrag = (
+    handle: EffectRangeHandle,
+    event: PointerEvent,
+  ) => {
+    if (!event.isPrimary) return;
+    event.preventDefault();
+    stopRangePointerDrag();
+    const rect = rangeSelectorTrackEl?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return;
+    activeRangeHandle = handle;
+    activeRangeRect = { left: rect.left, width: rect.width };
+    const applyFromPointer = (clientX: number) => {
+      const percent = getRangePercentFromClientX(clientX, activeRangeRect);
+      if (percent === null) return;
+      updateEffectRangeHandle(handle, percent);
+    };
+
+    applyFromPointer(event.clientX);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      applyFromPointer(moveEvent.clientX);
+    };
+    const handlePointerUp = () => {
+      stopRangePointerDrag();
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+    window.addEventListener("pointercancel", handlePointerUp, { once: true });
+    rangePointerCleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  };
+
+  const handleRangeTrackPointerDown = (event: PointerEvent) => {
+    if (!event.isPrimary) return;
+    if ((event.target as HTMLElement | null)?.closest("[data-range-handle]")) {
+      return;
+    }
+
+    const percent = getRangePercentFromClientX(event.clientX);
+    if (percent === null) return;
+    const nearestHandle = resolveNearestEffectRangeHandle(
+      {
+        startPercent: rangeStartPercent,
+        endPercent: rangeEndPercent,
+      },
+      percent,
+    );
+    beginRangePointerDrag(nearestHandle, event);
+  };
+
+  const handleRangeHandleKeydown = (
+    handle: EffectRangeHandle,
+    event: KeyboardEvent,
+  ) => {
+    const baseStep = event.shiftKey ? 5 : 1;
+    let nextRange = null as
+      | {
+          startPercent: number;
+          endPercent: number;
+        }
+      | null;
+
+    switch (event.key) {
+      case "ArrowLeft":
+      case "ArrowDown":
+        nextRange = nudgeEffectRangeHandle(
+          {
+            startPercent: rangeStartPercent,
+            endPercent: rangeEndPercent,
+          },
+          handle,
+          -baseStep,
+          MIN_EFFECT_RANGE_GAP_PERCENT,
+        );
+        break;
+      case "ArrowRight":
+      case "ArrowUp":
+        nextRange = nudgeEffectRangeHandle(
+          {
+            startPercent: rangeStartPercent,
+            endPercent: rangeEndPercent,
+          },
+          handle,
+          baseStep,
+          MIN_EFFECT_RANGE_GAP_PERCENT,
+        );
+        break;
+      case "PageDown":
+        nextRange = nudgeEffectRangeHandle(
+          {
+            startPercent: rangeStartPercent,
+            endPercent: rangeEndPercent,
+          },
+          handle,
+          -10,
+          MIN_EFFECT_RANGE_GAP_PERCENT,
+        );
+        break;
+      case "PageUp":
+        nextRange = nudgeEffectRangeHandle(
+          {
+            startPercent: rangeStartPercent,
+            endPercent: rangeEndPercent,
+          },
+          handle,
+          10,
+          MIN_EFFECT_RANGE_GAP_PERCENT,
+        );
+        break;
+      case "Home":
+        nextRange =
+          handle === "start"
+            ? moveEffectRangeHandle(
+                {
+                  startPercent: rangeStartPercent,
+                  endPercent: rangeEndPercent,
+                },
+                "start",
+                0,
+                MIN_EFFECT_RANGE_GAP_PERCENT,
+              )
+            : moveEffectRangeHandle(
+                {
+                  startPercent: rangeStartPercent,
+                  endPercent: rangeEndPercent,
+                },
+                "end",
+                rangeStartPercent + MIN_EFFECT_RANGE_GAP_PERCENT,
+                MIN_EFFECT_RANGE_GAP_PERCENT,
+              );
+        break;
+      case "End":
+        nextRange =
+          handle === "end"
+            ? moveEffectRangeHandle(
+                {
+                  startPercent: rangeStartPercent,
+                  endPercent: rangeEndPercent,
+                },
+                "end",
+                100,
+                MIN_EFFECT_RANGE_GAP_PERCENT,
+              )
+            : moveEffectRangeHandle(
+                {
+                  startPercent: rangeStartPercent,
+                  endPercent: rangeEndPercent,
+                },
+                "start",
+                rangeEndPercent - MIN_EFFECT_RANGE_GAP_PERCENT,
+                MIN_EFFECT_RANGE_GAP_PERCENT,
+              );
+        break;
+      default:
+        return;
+    }
+
+    event.preventDefault();
+    if (nextRange) {
+      applyEffectRangeFromPercents(
+        nextRange.startPercent,
+        nextRange.endPercent,
+      );
+    }
+  };
+
   const applyEnvelopeSettings = () => {
     reactiveEnvelope.set({
       target,
+      rangeStartHz: effectRangeStartHz,
+      rangeEndHz: effectRangeEndHz,
       attackMs,
       releaseMs,
       threshold,
@@ -149,16 +498,10 @@
   };
 
   const applyAutomationBounds = () => {
-    const speedMin = Math.max(
-      speedDomainMin,
-      Math.min(speedMinValue, speedDomainMax - 0.01),
-    );
-    const speedMax = Math.min(
-      speedDomainMax,
-      Math.max(speedMaxValue, speedMin + 0.01),
-    );
-    const stutterMin = Math.max(0, Math.min(stutterMinValue, 0.999));
-    const stutterMax = Math.min(1, Math.max(stutterMaxValue, stutterMin + 0.001));
+    const speedMin = clampValue(speedMinValue, speedDomainMin, speedDomainMax - 0.01);
+    const speedMax = clampValue(speedMaxValue, speedMin + 0.01, speedDomainMax);
+    const stutterMin = clampValue(stutterMinValue, 0, 0.999);
+    const stutterMax = clampValue(stutterMaxValue, stutterMin + 0.001, 1);
 
     speedMinValue = Number(speedMin.toFixed(2));
     speedMaxValue = Number(speedMax.toFixed(2));
@@ -185,7 +528,7 @@
     if (!analyser) {
       analyser = context.createAnalyser();
       analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.22;
+      analyser.smoothingTimeConstant = 0.42;
       fftData = new Uint8Array(analyser.frequencyBinCount);
     }
 
@@ -279,7 +622,7 @@
 
   const pushDetectedOnset = (value: number, timestamp: number) => {
     const timeSeconds = audioElement && $audioRuntime.source === "file" ? audioElement.currentTime || 0 : 0;
-    audioOnsets.update((events) =>
+    liveDetectedOnsets.update((events) =>
       [
         ...events,
         {
@@ -321,22 +664,18 @@
       const low = bandAverage(20, 180);
       const mid = bandAverage(180, 2000);
       const high = bandAverage(2000, 10000);
-      const full = bandAverage(20, 14000);
-
-      const targetedRaw =
-        target === "low"
-          ? low
-          : target === "mid"
-            ? mid
-            : target === "high"
-              ? high
-              : full;
-      const scaledTarget = clamp01(
+      const full = bandAverage(EFFECT_RANGE_MIN_HZ, EFFECT_RANGE_MAX_HZ);
+      const targetedRaw = bandAverage(effectRangeStartHz, effectRangeEndHz);
+      const scaledTarget = clampValue(
         ((targetedRaw - threshold) / Math.max(0.01, 1 - threshold)) *
           sensitivity,
+        0,
+        1,
       );
-      const scaledFull = clamp01(
+      const scaledFull = clampValue(
         ((full - threshold) / Math.max(0.01, 1 - threshold)) * sensitivity,
+        0,
+        1,
       );
 
       if (fftData.length > 0) {
@@ -438,6 +777,20 @@
     markers.set([]);
     activeSection.set("");
     audioOnsets.set([]);
+    liveDetectedOnsets.set([]);
+    switchProgressEvents.set([]);
+    transportAlignment.set({
+      firstBeatSeconds: 0,
+      source: "default",
+    });
+    onsetTransportState.set({
+      progressCount: 0,
+      target: 4,
+      armed: false,
+      blockedReason: null,
+      progressMode: "analyzed",
+      lastTransportSlot: null,
+    });
     essentiaAnalysis.set({
       bpm: null,
       confidence: null,
@@ -561,7 +914,7 @@
       else activeSection.set("");
 
       const firstBeatSeconds = full.beats[0] ?? 0;
-      const normalizedConfidence = clamp01(full.confidence);
+      const normalizedConfidence = clampValue(full.confidence, 0, 1);
       tempoState.update((state) => ({
         ...state,
         bpm: full.bpm,
@@ -569,6 +922,10 @@
         source: "auto",
         downbeatEpochMs: Date.now() - firstBeatSeconds * 1000,
       }));
+      transportAlignment.set({
+        firstBeatSeconds,
+        source: "essentia",
+      });
       detectedTempo.set({
         bpm: full.bpm,
         confidence: normalizedConfidence,
@@ -641,14 +998,29 @@
   };
 
   onMount(() => {
+    essentiaApiKey = defaultEssentiaApiKey;
+    syncEffectRange({
+      startHz: $reactiveEnvelope.rangeStartHz,
+      endHz: $reactiveEnvelope.rangeEndHz,
+    });
     applyEnvelopeSettings();
     startFftLoop();
-    essentiaApiKey = defaultEssentiaApiKey;
     speedMinValue = $automationBounds.speedMin;
     speedMaxValue = $automationBounds.speedMax;
     stutterMinValue = $automationBounds.stutterMin;
     stutterMaxValue = $automationBounds.stutterMax;
   });
+
+  $: ({
+    curve: spectrumCurvePath,
+    area: spectrumAreaPath,
+  } = buildSpectrumPaths(spectrumBars));
+  $: selectedRangeLabel = `${formatFrequency(effectRangeStartHz)} – ${formatFrequency(effectRangeEndHz)}`;
+  $: selectedRangeRouting = describeEffectRangeRouting({
+    startHz: effectRangeStartHz,
+    endHz: effectRangeEndHz,
+  });
+  $: onsetTransportPresentation = describeOnsetTransportState($onsetTransportState);
 
   $: if (
     $timelineSeekRequest &&
@@ -669,6 +1041,7 @@
   }
 
   onDestroy(() => {
+    stopRangePointerDrag();
     if (rafId) cancelAnimationFrame(rafId);
     if (loadedTrackUrl) URL.revokeObjectURL(loadedTrackUrl);
     teardownMic();
@@ -800,23 +1173,29 @@
       </div>
 
       <div
-        class="grid grid-cols-[auto_minmax(0,132px)_auto_46px_auto_46px] items-center justify-start gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm"
+        class="grid grid-cols-[minmax(0,1fr)_auto_46px_auto_46px] items-center gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm"
       >
-        <label
-          for="reactive-target"
-          class="text-surface-500 uppercase font-bold text-[0.55rem]"
-          >Node</label
-        >
-        <select
-          id="reactive-target"
-          bind:value={target}
-          on:change={applyEnvelopeSettings}
-          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm outline-none max-w-[132px]"
-        >
-          {#each targets as option}
-            <option value={option}>{option}</option>
-          {/each}
-        </select>
+        <div class="flex min-w-0 flex-col gap-1">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-surface-500 uppercase font-bold text-[0.55rem]"
+              >Effect Range</span
+            >
+            <span class="truncate text-[0.58rem] font-mono text-primary-300"
+              >{target.toUpperCase()} · {selectedRangeLabel}</span
+            >
+          </div>
+          <div class="flex flex-wrap gap-1">
+            {#each FREQUENCY_PRESETS as preset}
+              <button
+                class="rounded-sm border px-1.5 py-0.5 text-[0.52rem] font-bold uppercase tracking-wide {target === preset.id
+                  ? 'border-primary-500 bg-primary-500/15 text-primary-300'
+                  : 'border-surface-700 bg-surface-900 text-surface-400 hover:bg-surface-800'}"
+                aria-pressed={target === preset.id}
+                on:click={() => selectPresetRange(preset.id)}>{preset.label}</button
+              >
+            {/each}
+          </div>
+        </div>
         <label
           for="reactive-attack"
           class="text-surface-500 uppercase font-bold text-[0.55rem]"
@@ -887,42 +1266,201 @@
       <div
         class="bg-surface-950 border border-surface-800 rounded-sm p-1 flex flex-col gap-1"
         data-testid="fft-analyzer-visual"
-        title="FFT analyzer: bars show captured spectrum energy, the amber line is the trigger threshold, and the selected node is emphasized by the envelope meters below."
+        title="FFT analyzer: the smoothed curve shows captured spectrum energy, Low/Mid/High regions stay labeled, and the highlighted frequency span drives the live effect envelope."
       >
         <div class="flex items-center justify-between text-[0.55rem] uppercase font-bold text-surface-400">
           <span>FFT Analyzer</span>
-          <span class="font-mono text-primary-300">{target.toUpperCase()} · Thr {threshold.toFixed(2)}</span>
+          <span class="font-mono text-primary-300">{selectedRangeRouting.label} · Thr {threshold.toFixed(2)}</span>
         </div>
-        <div class="relative h-20 overflow-hidden rounded-sm border border-surface-800 bg-surface-950">
+        <div class="relative h-32 overflow-hidden rounded-sm border border-surface-800 bg-surface-950">
+          <div class="absolute inset-0">
+            {#each FREQUENCY_PRESETS.filter((preset) => preset.id !== "full") as preset}
+              <div
+                class="absolute inset-y-0 border-r border-surface-800/60 text-[0.5rem] font-bold uppercase tracking-[0.2em] text-surface-500/85"
+                style={`left:${frequencyToPercent(preset.startHz)}%; width:${frequencyToPercent(preset.endHz) - frequencyToPercent(preset.startHz)}%`}
+              >
+                <span class="absolute left-2 top-2">{preset.label}</span>
+              </div>
+            {/each}
+          </div>
           <div
-            class="absolute left-0 right-0 border-t border-primary-400/80"
+            class="absolute inset-y-0 rounded-sm border border-primary-400/65 bg-primary-500/10 shadow-[inset_0_0_24px_rgba(245,158,11,0.18)]"
+            style={`left:${rangeStartPercent}%; width:${Math.max(0, rangeEndPercent - rangeStartPercent)}%`}
+          ></div>
+          <div
+            class="absolute left-0 right-0 border-t border-primary-400/70"
             style={`bottom:${threshold * 100}%`}
           ></div>
-          <div class="absolute inset-0 flex items-end gap-[2px] px-1 pb-1">
-            {#each spectrumBars as bar, index}
-              <div
-                class="flex-1 rounded-t-[1px] {index < 4
-                  ? 'bg-emerald-400/75'
-                  : index < 18
-                    ? 'bg-primary-400/75'
-                    : 'bg-cyan-300/70'}"
-                style={`height:${Math.max(2, bar * 100)}%`}
-              ></div>
-            {/each}
+          <svg class="absolute inset-0 h-full w-full" viewBox={`0 0 ${spectrumPathWidth} ${spectrumPathHeight}`} preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="fft-area-gradient" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stop-color="rgba(96,165,250,0.35)" />
+                <stop offset="100%" stop-color="rgba(96,165,250,0.02)" />
+              </linearGradient>
+            </defs>
+            <path d={spectrumAreaPath} fill="url(#fft-area-gradient)"></path>
+            <path
+              d={spectrumCurvePath}
+              fill="none"
+              stroke="rgba(125,211,252,0.95)"
+              stroke-linejoin="round"
+              stroke-linecap="round"
+              stroke-width="4"
+            ></path>
+          </svg>
+          <div
+            class="pointer-events-none absolute -top-0.5 -translate-x-1/2 rounded-sm border border-primary-500/60 bg-surface-950/95 px-1 py-0.5 text-[0.5rem] font-mono text-primary-200 shadow-[0_0_12px_rgba(245,158,11,0.2)]"
+            style={`left:${rangeStartPercent}%`}
+          >
+            {formatFrequency(effectRangeStartHz)}
+          </div>
+          <div
+            class="pointer-events-none absolute -top-0.5 -translate-x-1/2 rounded-sm border border-primary-500/60 bg-surface-950/95 px-1 py-0.5 text-[0.5rem] font-mono text-primary-200 shadow-[0_0_12px_rgba(245,158,11,0.2)]"
+            style={`left:${rangeEndPercent}%`}
+          >
+            {formatFrequency(effectRangeEndHz)}
           </div>
           {#if Date.now() - lastDetectedOnsetMs < 180}
             <div class="absolute inset-0 border border-primary-300 shadow-[inset_0_0_20px_rgba(245,158,11,0.35)]"></div>
           {/if}
         </div>
-        <div class="grid grid-cols-4 gap-1 text-[0.55rem] font-mono text-surface-400">
-          <span class={target === "low" ? "text-emerald-300" : ""}>LOW {$audioBands.low.toFixed(2)}</span>
-          <span class={target === "mid" ? "text-primary-300" : ""}>MID {$audioBands.mid.toFixed(2)}</span>
-          <span class={target === "high" ? "text-cyan-300" : ""}>HIGH {$audioBands.high.toFixed(2)}</span>
-          <span class={target === "full" ? "text-primary-300" : ""}>FULL {$audioBands.full.toFixed(2)}</span>
+        <div class="grid grid-cols-[1fr_auto] gap-2 text-[0.55rem] font-mono text-surface-400">
+          <div class="grid grid-cols-4 gap-1">
+            <span class={target === "low" ? "text-emerald-300" : ""}>LOW {$audioBands.low.toFixed(2)}</span>
+            <span class={target === "mid" ? "text-primary-300" : ""}>MID {$audioBands.mid.toFixed(2)}</span>
+            <span class={target === "high" ? "text-cyan-300" : ""}>HIGH {$audioBands.high.toFixed(2)}</span>
+            <span class={target === "full" ? "text-primary-300" : ""}>FULL {$audioBands.full.toFixed(2)}</span>
+          </div>
+          <span class="text-primary-200">DRV {$audioBands.envelopeA.toFixed(2)}</span>
+        </div>
+        <div
+          class="relative rounded-sm border border-surface-800 bg-surface-950 px-2 py-2"
+          data-testid="fft-range-selector"
+        >
+          <div class="mb-2 flex items-center justify-between text-[0.52rem] uppercase tracking-wide text-surface-500">
+            <span class="font-bold">Effect span</span>
+            <span class="font-mono text-primary-300">{selectedRangeLabel}</span>
+          </div>
+          <div
+            bind:this={rangeSelectorTrackEl}
+            role="group"
+            aria-label="Effect range selector track"
+            class="relative h-11 touch-none select-none"
+            on:pointerdown={handleRangeTrackPointerDown}
+          >
+            <div class="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-surface-800"></div>
+            {#each FREQUENCY_PRESETS.filter((preset) => preset.id !== "full") as preset}
+              <div
+                class="pointer-events-none absolute inset-y-1 rounded-sm border border-surface-800/60 bg-surface-900/50"
+                style={`left:${frequencyToPercent(preset.startHz)}%; width:${frequencyToPercent(preset.endHz) - frequencyToPercent(preset.startHz)}%`}
+                aria-hidden="true"
+              >
+                <span class="absolute left-1 top-0.5 text-[0.46rem] font-bold uppercase tracking-[0.18em] text-surface-500/80">
+                  {preset.label}
+                </span>
+              </div>
+            {/each}
+            <div
+              class="pointer-events-none absolute inset-y-1 rounded-sm border border-primary-400/70 bg-primary-500/12 shadow-[0_0_16px_rgba(245,158,11,0.25)]"
+              style={`left:${rangeStartPercent}%; width:${Math.max(0, rangeEndPercent - rangeStartPercent)}%`}
+            ></div>
+            <button
+              type="button"
+              data-range-handle="start"
+              role="slider"
+              aria-label="Effect range start frequency"
+              aria-orientation="horizontal"
+              aria-valuemin={EFFECT_RANGE_MIN_HZ}
+              aria-valuemax={Math.round(effectRangeEndHz)}
+              aria-valuenow={Math.round(effectRangeStartHz)}
+              aria-valuetext={formatFrequency(effectRangeStartHz)}
+              class="absolute top-1/2 z-10 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary-300 bg-surface-950 shadow-[0_0_0_1px_rgba(245,158,11,0.12),0_0_16px_rgba(245,158,11,0.25)] outline-none transition hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary-400/70"
+              class:border-primary-100={activeRangeHandle === "start"}
+              class:scale-105={activeRangeHandle === "start"}
+              style={`left:${rangeStartPercent}%`}
+              on:pointerdown={(event) => beginRangePointerDrag("start", event)}
+              on:keydown={(event) => handleRangeHandleKeydown("start", event)}
+            >
+              <span class="sr-only">Move range start</span>
+            </button>
+            <button
+              type="button"
+              data-range-handle="end"
+              role="slider"
+              aria-label="Effect range end frequency"
+              aria-orientation="horizontal"
+              aria-valuemin={Math.round(effectRangeStartHz)}
+              aria-valuemax={EFFECT_RANGE_MAX_HZ}
+              aria-valuenow={Math.round(effectRangeEndHz)}
+              aria-valuetext={formatFrequency(effectRangeEndHz)}
+              class="absolute top-1/2 z-10 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary-300 bg-surface-950 shadow-[0_0_0_1px_rgba(245,158,11,0.12),0_0_16px_rgba(245,158,11,0.25)] outline-none transition hover:scale-105 focus-visible:ring-2 focus-visible:ring-primary-400/70"
+              class:border-primary-100={activeRangeHandle === "end"}
+              class:scale-105={activeRangeHandle === "end"}
+              style={`left:${rangeEndPercent}%`}
+              on:pointerdown={(event) => beginRangePointerDrag("end", event)}
+              on:keydown={(event) => handleRangeHandleKeydown("end", event)}
+            >
+              <span class="sr-only">Move range end</span>
+            </button>
+            <div
+              class="pointer-events-none absolute top-0 z-20 -translate-x-1/2 rounded-sm border border-primary-500/60 bg-surface-950/95 px-1 py-0.5 text-[0.5rem] font-mono text-primary-200 shadow-[0_0_12px_rgba(245,158,11,0.2)]"
+              style={`left:${rangeStartPercent}%`}
+            >
+              {formatFrequency(effectRangeStartHz)}
+            </div>
+            <div
+              class="pointer-events-none absolute top-0 z-20 -translate-x-1/2 rounded-sm border border-primary-500/60 bg-surface-950/95 px-1 py-0.5 text-[0.5rem] font-mono text-primary-200 shadow-[0_0_12px_rgba(245,158,11,0.2)]"
+              style={`left:${rangeEndPercent}%`}
+            >
+              {formatFrequency(effectRangeEndHz)}
+            </div>
+          </div>
+          <div class="mt-2 flex items-center justify-between text-[0.5rem] font-mono text-surface-500">
+            <span>{formatFrequency(EFFECT_RANGE_MIN_HZ)}</span>
+            <span>{formatFrequency(EFFECT_RANGE_MAX_HZ)}</span>
+          </div>
+          <div class="mt-2 grid grid-cols-[auto_1fr] gap-2 rounded-sm border border-surface-800 bg-surface-900/70 px-2 py-1 text-[0.52rem]">
+            <span class="font-bold uppercase tracking-wide text-surface-500">Routing</span>
+            <span class="text-surface-300">{selectedRangeRouting.detail}</span>
+          </div>
+          <div class="sr-only">
+            <label for="effect-range-start-input">Effect range start frequency</label>
+            <input
+              id="effect-range-start-input"
+              type="range"
+              min="0"
+              max="100"
+              step="0.5"
+              value={rangeStartPercent}
+              on:input={handleRangeStartInput}
+            />
+            <label for="effect-range-end-input">Effect range end frequency</label>
+            <input
+              id="effect-range-end-input"
+              type="range"
+              min="0"
+              max="100"
+              step="0.5"
+              value={rangeEndPercent}
+              on:input={handleRangeEndInput}
+            />
+          </div>
         </div>
       </div>
 
       <div class="flex flex-col gap-1 mt-1">
+        <div
+          class="rounded-sm border px-2 py-1 text-[0.55rem] font-mono uppercase tracking-wide {onsetTransportPresentation.tone === 'armed'
+            ? 'border-emerald-500/70 bg-emerald-500/10 text-emerald-100'
+            : onsetTransportPresentation.tone === 'warning'
+              ? 'border-amber-400/70 bg-amber-500/10 text-amber-100'
+              : 'border-surface-700 bg-surface-950 text-surface-300'}"
+          data-testid="onset-transport-status"
+          title="Authoritative onset transport state: analyzed markers remain authoritative, fallback is labeled, and armed/holding states stay explicit."
+        >
+          <div class="font-bold">{onsetTransportPresentation.headline}</div>
+          <div class="normal-case tracking-normal text-[0.52rem]">{onsetTransportPresentation.detail}</div>
+        </div>
         <div
           class="grid grid-cols-[60px_1fr] items-center gap-1 text-[0.6rem] uppercase text-surface-400 font-bold"
         >

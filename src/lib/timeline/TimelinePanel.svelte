@@ -6,10 +6,21 @@
     automationBounds,
     automationRuntime,
     essentiaAnalysis,
+    liveDetectedOnsets,
     markers,
+    switchProgressEvents,
     waveformOverview,
   } from "$lib/stores/runtime";
   import { buildWaveformViewportPath } from "$lib/audio/wav";
+  import { buildTimelineOnsetLanes, type TimelineOnsetMarker } from "$lib/timeline/onsetMarkers";
+  import {
+    SPEED_AUTOMATION_DOMAIN,
+    STUTTER_AUTOMATION_DOMAIN,
+    clampValue,
+    mapNormalizedToRange,
+    mapRangeToNormalized,
+    normalizeAutomationBounds,
+  } from "$lib/runtime/automationBounds";
 
   export let duration = 0;
   export let currentTime = 0;
@@ -50,10 +61,11 @@
   const markerTagAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const zoomSteps = [1, 2, 4, 8, 16];
   const laneLabelWidthPx = 110;
-  const speedDomainMin = 0.25;
-  const speedDomainMax = 4;
-  const stutterDomainMin = 0;
-  const stutterDomainMax = 1;
+  const speedDomainMin = SPEED_AUTOMATION_DOMAIN.min;
+  const speedDomainMax = SPEED_AUTOMATION_DOMAIN.max;
+  const stutterDomainMin = STUTTER_AUTOMATION_DOMAIN.min;
+  const stutterDomainMax = STUTTER_AUTOMATION_DOMAIN.max;
+  const clamp = clampValue;
 
   let zoomLevel = 1;
   let followPlayhead = true;
@@ -112,7 +124,9 @@
     index: number;
     total: number;
   }> = [];
-  let visibleOnsetMarkers: Array<{ position: number; counted: boolean; value: number; source: string; label: string }> = [];
+  let authoritativeOnsetMarkers: TimelineOnsetMarker[] = [];
+  let liveDetectedOverlayMarkers: TimelineOnsetMarker[] = [];
+  let countedDebugOverlayMarkers: TimelineOnsetMarker[] = [];
   let sectionBands: Array<{
     section: string;
     label: string;
@@ -140,28 +154,16 @@
   let stutterMaxBound = 1;
   let currentSpeedRate = 1;
   let currentStutterAmount = 0;
+  let normalizedAutomationBounds = {
+    speedMin: 0.5,
+    speedMax: 2.1,
+    stutterMin: 0,
+    stutterMax: 1,
+  };
 
   let stutterEditorEl: HTMLDivElement | null = null;
   let speedEditorEl: HTMLDivElement | null = null;
   let activeDrag: DragState | null = null;
-
-  const clamp = (value: number, min: number, max: number): number =>
-    Math.max(min, Math.min(max, value));
-
-  const mapNormalizedToRange = (
-    normalized: number,
-    min: number,
-    max: number,
-  ): number => min + clamp(normalized, 0, 1) * (max - min);
-
-  const mapRangeToNormalized = (
-    value: number,
-    min: number,
-    max: number,
-  ): number => {
-    const span = Math.max(0.0001, max - min);
-    return clamp((value - min) / span, 0, 1);
-  };
 
   const formatClock = (seconds: number): string => {
     if (!Number.isFinite(seconds) || seconds < 0) return "00:00";
@@ -879,15 +881,18 @@
     })
     .filter((entry) => entry.position >= 0 && entry.position <= 100);
 
-  $: visibleOnsetMarkers = $audioOnsets
-    .map((event) => ({
-      position: toLocalPercent(event.timeSeconds / safeDuration, viewportStart, viewportWindow),
-      counted: event.counted,
-      value: event.value,
-      source: event.source,
-      label: `${event.counted ? "Counted" : event.source === "essentia" ? "Essentia" : "Detected"} ${event.band.toUpperCase()} onset · ${event.timeSeconds.toFixed(2)}s`
-    }))
-    .filter((entry) => entry.position >= 0 && entry.position <= 100);
+  $: ({
+    authoritative: authoritativeOnsetMarkers,
+    liveFallback: liveDetectedOverlayMarkers,
+    countedDebug: countedDebugOverlayMarkers
+  } = buildTimelineOnsetLanes({
+    authoritative: $audioOnsets,
+    liveFallback: $liveDetectedOnsets,
+    countedDebug: $switchProgressEvents,
+    durationSeconds: safeDuration,
+    viewportStart,
+    viewportWindow,
+  }));
 
   $: sectionBands = timelineSections
     .map((section) => {
@@ -905,8 +910,8 @@
         section: section.section,
         label: section.label,
         energy: section.energy,
-        left: clamp(startPercent, 0, 100),
-        width: clamp(endPercent - startPercent, 0, 100),
+        left: clampValue(startPercent, 0, 100),
+        width: clampValue(endPercent - startPercent, 0, 100),
       };
     })
     .filter((band) => band.width > 0.2);
@@ -923,26 +928,11 @@
     1600,
   );
 
-  $: speedMinBound = clamp(
-    Math.min($automationBounds.speedMin, $automationBounds.speedMax - 0.01),
-    speedDomainMin,
-    speedDomainMax - 0.01,
-  );
-  $: speedMaxBound = clamp(
-    Math.max($automationBounds.speedMax, speedMinBound + 0.01),
-    speedMinBound + 0.01,
-    speedDomainMax,
-  );
-  $: stutterMinBound = clamp(
-    Math.min($automationBounds.stutterMin, $automationBounds.stutterMax - 0.001),
-    stutterDomainMin,
-    stutterDomainMax - 0.001,
-  );
-  $: stutterMaxBound = clamp(
-    Math.max($automationBounds.stutterMax, stutterMinBound + 0.001),
-    stutterMinBound + 0.001,
-    stutterDomainMax,
-  );
+  $: normalizedAutomationBounds = normalizeAutomationBounds($automationBounds);
+  $: speedMinBound = normalizedAutomationBounds.speedMin;
+  $: speedMaxBound = normalizedAutomationBounds.speedMax;
+  $: stutterMinBound = normalizedAutomationBounds.stutterMin;
+  $: stutterMaxBound = normalizedAutomationBounds.stutterMax;
   $: displayStutterPointsData = stutterPoints.map((point) => ({
     x: point.x,
     y: mapRangeToNormalized(
@@ -1005,7 +995,7 @@
     }
   }
 
-  $: normalizedPlayhead = clamp(currentTime / safeDuration, 0, 1);
+  $: normalizedPlayhead = clampValue(currentTime / safeDuration, 0, 1);
   $: currentSpeedValue = evaluateCurveY(
     speedPoints,
     speedInterpolation,
@@ -1338,18 +1328,59 @@
             />
           </svg>
         </div>
-        {#each visibleOnsetMarkers as marker}
+        <div class="absolute right-2 top-2 z-20 flex flex-wrap items-center justify-end gap-1 text-[0.5rem] uppercase tracking-widest text-surface-300">
+          <span class="rounded-full border border-lime-300/70 bg-lime-500/10 px-2 py-0.5 text-lime-100">Analyzed main lane</span>
+          {#if liveDetectedOverlayMarkers.length > 0}
+            <span class="rounded-full border border-sky-300/60 bg-sky-500/10 px-2 py-0.5 text-sky-100">Live fallback overlay</span>
+          {/if}
+          {#if countedDebugOverlayMarkers.length > 0}
+            <span class="rounded-full border border-primary-300/70 bg-primary-500/10 px-2 py-0.5 text-primary-100">Count/debug overlay</span>
+          {/if}
+        </div>
+        {#if authoritativeOnsetMarkers.length === 0 && (liveDetectedOverlayMarkers.length > 0 || countedDebugOverlayMarkers.length > 0)}
           <div
-            class="absolute top-0 bottom-0 z-20 w-[1px] {marker.counted ? 'bg-primary-300' : marker.source === 'essentia' ? 'bg-lime-300/80' : 'bg-surface-300/70'}"
+            class="absolute right-2 top-8 z-20 rounded border border-amber-300/60 bg-surface-950/90 px-2 py-1 text-[0.5rem] uppercase tracking-widest text-amber-100"
+            title="Authoritative analyzed onsets are unavailable, so only fallback/debug overlays are visible."
+          >
+            Analyzed onsets unavailable
+          </div>
+        {/if}
+        {#if liveDetectedOverlayMarkers.length > 0}
+          <div class="absolute left-2 top-2 z-20 rounded border border-sky-300/60 bg-surface-950/90 px-2 py-0.5 text-[0.48rem] uppercase tracking-widest text-sky-100">
+            Live fallback
+          </div>
+          {#each liveDetectedOverlayMarkers as marker}
+            <div
+              class="absolute top-[6%] h-[20%] z-20 w-[1px] bg-sky-300/75"
+              style={`left:${marker.position}%`}
+              title={marker.label}
+            >
+              <span class="absolute -top-0.5 -ml-[3px] h-1.5 w-1.5 rounded-full border border-sky-100 bg-sky-300 shadow-[0_0_6px_rgba(125,211,252,0.65)]"></span>
+            </div>
+          {/each}
+        {/if}
+        {#if countedDebugOverlayMarkers.length > 0}
+          <div class="absolute left-2 bottom-2 z-20 rounded border border-primary-300/60 bg-surface-950/90 px-2 py-0.5 text-[0.48rem] uppercase tracking-widest text-primary-100">
+            Count/debug
+          </div>
+          {#each countedDebugOverlayMarkers as marker}
+            <div
+              class="absolute bottom-[6%] h-[20%] z-20 w-[1px] bg-primary-300/80"
+              style={`left:${marker.position}%`}
+              title={marker.label}
+            >
+              <span class="absolute bottom-0 -ml-[3px] h-1.5 w-1.5 rounded-full border border-primary-100 bg-primary-300 shadow-[0_0_7px_rgba(245,158,11,0.7)]"></span>
+            </div>
+          {/each}
+        {/if}
+        {#each authoritativeOnsetMarkers as marker}
+          <div
+            class="absolute top-0 bottom-0 z-20 w-[1px] bg-lime-300/80"
             style={`left:${marker.position}%`}
             title={marker.label}
           >
             <span
-              class="absolute -top-0.5 -ml-[4px] h-2 w-2 rounded-full border {marker.counted
-                ? 'border-primary-100 bg-primary-400 shadow-[0_0_8px_rgba(245,158,11,0.85)]'
-                : marker.source === 'essentia'
-                  ? 'border-lime-100 bg-lime-300 shadow-[0_0_6px_rgba(190,242,100,0.7)]'
-                  : 'border-surface-200 bg-surface-500'}"
+              class="absolute -top-0.5 -ml-[4px] h-2 w-2 rounded-full border border-lime-100 bg-lime-300 shadow-[0_0_6px_rgba(190,242,100,0.7)]"
             ></span>
           </div>
         {/each}

@@ -9,14 +9,26 @@
   } from "$lib/runtime/time-shaper";
   import {
     activeSection,
-    audioOnsets,
     audioRuntime,
     automationBounds,
     automationRuntime,
     audioBands,
     reactiveEnvelope,
     tempoState,
+    transportAlignment,
   } from "$lib/stores/runtime";
+  import { videoDeckAuthority, type VideoDeckClipRecord } from "$lib/stores/videoDeck";
+  import {
+    SPEED_AUTOMATION_DOMAIN,
+    clampValue,
+    mapNormalizedToRange,
+    normalizeAutomationBounds,
+  } from "$lib/runtime/automationBounds";
+  import {
+    describeVideoDeckSwitchNotice,
+    type VideoDeckPrewarmStatus,
+  } from "$lib/video/hotDeckSwitchStatus";
+  import { enforceSilentVideoElement } from "$lib/video/mediaMute";
 
   export let duration = 0;
   export let currentTime = 0;
@@ -28,51 +40,41 @@
     player.currentTime = Math.max(0, Math.min(t, duration || t));
   };
 
-  interface VideoClip {
-    id: string;
-    name: string;
-    url: string;
-    sizeMb: string;
-    lane: number;
-    slot: number;
-  }
-
-  let clips: VideoClip[] = [];
+  let clips: VideoDeckClipRecord[] = [];
   let selectedClipId = "";
   let player: HTMLVideoElement | null = null;
   let prewarmPlayer: HTMLVideoElement | null = null;
-  let status = "Drop or upload clips to begin playback.";
+  let authorityStatus = "";
+  let uiStatus = "Drop or upload clips to begin playback.";
   let envelopeGateEnabled = true;
   let speedRampEnabled = true;
   let timeShaperEnabled = true;
   let selectedTimeShapePresetId = "stutter-1-8";
   let timeShaperMix = 0.82;
   let timeShaperDepth = 0.86;
-  let timeShaperBand: "low" | "mid" | "high" | "full" = "full";
   let timeShaperStatus = "TimeShaper armed";
   let timeShaperLastAppliedMs = 0;
   let timeShaperLastTriggeredAtMs: number | null = null;
   let switchSkipChancePercent = 0;
   let onsetSwitchTarget = 4;
   let onsetCountForClip = 0;
-  let onsetGateWasOpen = false;
   const maxOnsetDots = 8;
   let currentPlaybackRate = 1;
   let currentAutomationRate = 1;
   let currentAutomationStutter = 0;
   let lastStutterPulseMs = 0;
-  let lastQuantizeSlot = -1;
   let playbackRafId = 0;
   let pendingSeekRatio: number | null = null;
   let resumeAfterSwitch = false;
   let prewarmClipId = "";
-  let prewarmReady = false;
+  let prewarmStatus: VideoDeckPrewarmStatus = "idle";
   const matrixColumns = 14;
   let uploadLane = 0;
   let laneMuted = [false, false, false];
   let soloLane: number | null = null;
-  const speedDomainMin = 0.25;
-  const speedDomainMax = 4;
+  let prewarmReady = false;
+  const speedDomainMin = SPEED_AUTOMATION_DOMAIN.min;
+  const speedDomainMax = SPEED_AUTOMATION_DOMAIN.max;
 
   interface TimeShapePreset {
     id: string;
@@ -166,13 +168,6 @@
       ],
     },
   ];
-  const mapNormalizedToRange = (
-    normalized: number,
-    min: number,
-    max: number,
-  ): number => min + Math.max(0, Math.min(1, normalized)) * (max - min);
-  const clamp = (value: number, min: number, max: number): number =>
-    Math.max(min, Math.min(max, value));
   const wrapMediaTime = (value: number, mediaDuration: number): number => {
     if (!Number.isFinite(value)) return 0;
     if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) return Math.max(0, value);
@@ -183,13 +178,33 @@
   const makeId = (): string =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-  let currentClip: VideoClip | undefined = undefined;
+  const formatFrequencyLabel = (value: number): string => {
+    if (!Number.isFinite(value)) return "0Hz";
+    if (value >= 1000) {
+      const normalized = value / 1000;
+      return `${normalized >= 10 ? normalized.toFixed(0) : normalized.toFixed(1)}kHz`;
+    }
+    return `${Math.round(value)}Hz`;
+  };
+
+  let currentClip: VideoDeckClipRecord | undefined = undefined;
   let currentClipIndex = -1;
   let currentTimeShapePreset: TimeShapePreset = timeShapePresets[0];
-  let nextPrewarmClip: VideoClip | undefined = undefined;
+  let nextPrewarmClip: VideoDeckClipRecord | undefined = undefined;
+  let switchNotice = describeVideoDeckSwitchNotice({
+    autoSwitchEnabled,
+    playableClipCount: 0,
+    currentClipName: undefined,
+    nextClipName: undefined,
+    prewarmStatus,
+  });
   let timeShapePreviewPoints = "";
   let timeShapePreviewPhase = 0;
+  let timeShaperTriggerLabel = "20Hz–14kHz";
 
+  $: selectedClipId = $videoDeckAuthority.selectedClipId;
+  $: authorityStatus = $videoDeckAuthority.status;
+  $: onsetCountForClip = $videoDeckAuthority.onsetCountForClip;
   $: currentClip = clips.find((clip) => clip.id === selectedClipId);
   $: currentClipIndex = clips.findIndex((clip) => clip.id === selectedClipId);
   $: currentTimeShapePreset =
@@ -202,11 +217,19 @@
   })();
   $: if (nextPrewarmClip?.id !== prewarmClipId) {
     prewarmClipId = nextPrewarmClip?.id ?? "";
-    prewarmReady = false;
+    prewarmStatus = nextPrewarmClip ? "warming" : "idle";
     if (prewarmPlayer && nextPrewarmClip) {
       prewarmPlayer.load();
     }
   }
+  $: prewarmReady = prewarmStatus === "ready";
+  $: switchNotice = describeVideoDeckSwitchNotice({
+    autoSwitchEnabled,
+    playableClipCount: playableClips().length,
+    currentClipName: currentClip?.name,
+    nextClipName: nextPrewarmClip?.name,
+    prewarmStatus,
+  });
   $: timeShapePreviewPoints = currentTimeShapePreset.points
     .map((point) => `${Math.max(0, Math.min(1, point.x)) * 100},${50 - Math.max(-1, Math.min(1, point.y)) * 38}`)
     .join(" "), currentTimeShapePreset.id;
@@ -215,9 +238,29 @@
     const phase = (getBeatPosition() % cycle) / cycle;
     return Math.max(0, Math.min(100, phase * 100));
   })();
+  $: timeShaperTriggerLabel = `${formatFrequencyLabel($reactiveEnvelope.rangeStartHz)}–${formatFrequencyLabel($reactiveEnvelope.rangeEndHz)}`;
+  $: enforceSilentVideoElement(player);
+  $: enforceSilentVideoElement(prewarmPlayer);
+  $: videoDeckAuthority.update((state) => ({
+    ...state,
+    clips,
+    laneMuted: [...laneMuted],
+    soloLane,
+    autoSwitchEnabled,
+    quantizeMode,
+    envelopeGateEnabled,
+    onsetSwitchTarget,
+    switchSkipChancePercent,
+    prewarmClipId,
+    prewarmReady,
+  }));
+  $: if (player && currentClip && player.currentSrc && !player.currentSrc.includes(currentClip.url)) {
+    pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
+    resumeAfterSwitch = !player.paused;
+  }
   const laneIsActive = (lane: number): boolean =>
     soloLane === null ? !laneMuted[lane] : soloLane === lane;
-  const playableClips = (): VideoClip[] =>
+  const playableClips = (): VideoDeckClipRecord[] =>
     clips
       .filter((clip) => laneIsActive(clip.lane))
       .sort((a, b) => (a.lane === b.lane ? a.slot - b.slot : a.lane - b.lane));
@@ -225,28 +268,31 @@
   const ensurePlayableSelection = () => {
     const playable = playableClips();
     if (playable.length === 0) {
-      selectedClipId = "";
+      videoDeckAuthority.update((state) => ({ ...state, selectedClipId: "" }));
       duration = 0;
       currentTime = 0;
       return;
     }
     if (!playable.some((clip) => clip.id === selectedClipId)) {
-      selectedClipId = playable[0].id;
+      videoDeckAuthority.update((state) => ({
+        ...state,
+        selectedClipId: playable[0].id,
+      }));
       duration = 0;
       currentTime = 0;
     }
   };
 
-  const clipAtMatrix = (row: number, col: number): VideoClip | undefined => {
+  const clipAtMatrix = (row: number, col: number): VideoDeckClipRecord | undefined => {
     if (clips.length === 0) return undefined;
     return clips.find((clip) => clip.lane === row && clip.slot === col);
   };
 
   const selectClip = (id: string) => {
-    selectedClipId = id;
+    videoDeckAuthority.update((state) => ({ ...state, selectedClipId: id }));
     duration = 0;
     currentTime = 0;
-    status = `Selected ${clips.find((clip) => clip.id === id)?.name ?? "clip"}`;
+    uiStatus = `Selected ${clips.find((clip) => clip.id === id)?.name ?? "clip"}`;
   };
 
   const uploadClips = (event: Event) => {
@@ -256,7 +302,7 @@
     ).filter((file) => file.type.startsWith("video/"));
 
     if (!files.length) {
-      status = "No video files detected in selection.";
+      uiStatus = "No video files detected in selection.";
       return;
     }
 
@@ -269,7 +315,7 @@
     );
 
     if (availableSlots.length === 0) {
-      status = `Layer ${uploadLane + 1} is full. Remove clips or upload to another layer.`;
+      uiStatus = `Layer ${uploadLane + 1} is full. Remove clips or upload to another layer.`;
       return;
     }
 
@@ -288,8 +334,10 @@
       a.lane === b.lane ? a.slot - b.slot : a.lane - b.lane,
     );
     ensurePlayableSelection();
-    if (!selectedClipId) selectedClipId = added[0].id;
-    status = droppedCount
+    if (!selectedClipId) {
+      videoDeckAuthority.update((state) => ({ ...state, selectedClipId: added[0].id }));
+    }
+    uiStatus = droppedCount
       ? `Loaded ${added.length} clip(s) to layer ${lane + 1}. ${droppedCount} clip(s) skipped.`
       : `Loaded ${added.length} clip${added.length > 1 ? "s" : ""} to layer ${lane + 1}`;
   };
@@ -300,155 +348,30 @@
     clips = clips.filter((entry) => entry.id !== id);
     ensurePlayableSelection();
     if (selectedClipId === id)
-      status = "Selected clip removed. Switched to next active clip.";
-  };
-
-  const getSlotDuration = (): number => {
-    const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
-    const beatDuration = 60 / bpm;
-    return quantizeMode === "bar" ? beatDuration * 4 : beatDuration;
-  };
-
-  const getTransportSlotIndex = (): number => {
-    const slotDuration = getSlotDuration();
-    if (!Number.isFinite(slotDuration) || slotDuration <= 0) return -1;
-    const elapsedSeconds = Math.max(
-      0,
-      (Date.now() - $tempoState.downbeatEpochMs) / 1000,
-    );
-    return Math.floor(elapsedSeconds / slotDuration);
-  };
-
-  const queueQuantizedSwitch = (slotIndex: number) => {
-    const playable = playableClips();
-    if (playable.length < 2 || !selectedClipId) return;
-    const currentIndex = playable.findIndex(
-      (clip) => clip.id === selectedClipId,
-    );
-    if (currentIndex < 0) {
-      selectedClipId = playable[0].id;
-      return;
-    }
-
-    const nextIndex = (currentIndex + 1) % playable.length;
-    const nextClip = playable[nextIndex];
-    if (prewarmClipId === nextClip.id && !prewarmReady) {
-      status = `Warming ${nextClip.name}; holding ${currentClip?.name ?? "clip"} to avoid frozen switch`;
-      return;
-    }
-    pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
-    resumeAfterSwitch = Boolean(player && !player.paused);
-    selectedClipId = playable[nextIndex].id;
-    onsetCountForClip = 0;
-    onsetGateWasOpen = false;
-    status = `Quantized ${quantizeMode} switch after ${onsetSwitchTarget} onset(s): ${playable[nextIndex].name} (slot ${slotIndex})`;
+      uiStatus = "Selected clip removed. Switched to next active clip.";
   };
 
   const applyOnsetTarget = () => {
     onsetSwitchTarget = Math.max(1, Math.min(32, Math.round(Number(onsetSwitchTarget) || 1)));
-    onsetCountForClip = Math.min(onsetCountForClip, onsetSwitchTarget);
   };
 
   const getOnsetProgress = (): number =>
-    onsetSwitchTarget > 0 ? clamp(onsetCountForClip / onsetSwitchTarget, 0, 1) : 0;
+    onsetSwitchTarget > 0
+      ? clampValue(onsetCountForClip / onsetSwitchTarget, 0, 1)
+      : 0;
 
   const getOnsetDotCount = (): number => Math.max(1, Math.min(maxOnsetDots, onsetSwitchTarget));
 
   const getFilledOnsetDots = (): number => Math.round(getOnsetProgress() * getOnsetDotCount());
 
-  const countEssentiaOnsets = (): number => {
-    const currentAudioTime = $audioRuntime.source === "file" ? $audioRuntime.currentTime : 0;
-    if (currentAudioTime <= 0) return 0;
-
-    let counted = 0;
-    audioOnsets.update((events) =>
-      events.map((event) => {
-        if (
-          event.source === "essentia" &&
-          !event.counted &&
-          event.timeSeconds <= currentAudioTime + 0.05
-        ) {
-          counted += 1;
-          return { ...event, counted: true as const };
-        }
-        return event;
-      }),
-    );
-
-    if (counted > 0) onsetCountForClip += counted;
-    return counted;
-  };
-
-  const registerOnsetIfNeeded = () => {
-    const essentiaCount = countEssentiaOnsets();
-    if (essentiaCount > 0) return true;
-
-    const gateOpen = $audioBands.envelopeA > $reactiveEnvelope.threshold;
-    if (gateOpen && !onsetGateWasOpen) {
-      onsetCountForClip += 1;
-      audioOnsets.update((events) =>
-        [
-          ...events,
-          {
-            id: `cnt-${Date.now()}-${events.length}`,
-            timestampMs: Date.now(),
-            timeSeconds: player?.currentTime ?? currentTime ?? 0,
-            band: timeShaperBand,
-            value: $audioBands.envelopeA,
-            threshold: $reactiveEnvelope.threshold,
-            counted: true,
-            source: "counted" as const,
-          },
-        ].slice(-256),
-      );
-    }
-    onsetGateWasOpen = gateOpen;
-    return gateOpen;
-  };
-
-  const maybeQuantizedSwitch = () => {
-    if (
-      !autoSwitchEnabled ||
-      !player ||
-      player.paused ||
-      playableClips().length < 2
-    )
-      return;
-    const countedOnset = envelopeGateEnabled ? registerOnsetIfNeeded() : true;
-    const slotIndex = getTransportSlotIndex();
-    if (slotIndex > lastQuantizeSlot) {
-      if (!envelopeGateEnabled && lastQuantizeSlot >= 0) onsetCountForClip += 1;
-      if (lastQuantizeSlot >= 0 && onsetCountForClip >= onsetSwitchTarget) {
-        const skipChance = clamp(switchSkipChancePercent, 0, 100) / 100;
-        if (skipChance > 0 && Math.random() < skipChance) {
-          status = `Quantized ${quantizeMode} switch bypassed (${Math.round(skipChance * 100)}%) · onset ${onsetCountForClip}/${onsetSwitchTarget}`;
-          onsetCountForClip = 0;
-        } else {
-          queueQuantizedSwitch(slotIndex);
-        }
-      } else if (lastQuantizeSlot >= 0) {
-        status = countedOnset
-          ? `Holding ${currentClip?.name ?? "clip"}: onset ${onsetCountForClip}/${onsetSwitchTarget}`
-          : `Holding ${currentClip?.name ?? "clip"}: waiting for onset ${onsetCountForClip}/${onsetSwitchTarget}`;
-      }
-      lastQuantizeSlot = slotIndex;
-    }
-  };
-
   const applySwitchSkipChance = () => {
     switchSkipChancePercent = Number(
-      clamp(Number(switchSkipChancePercent) || 0, 0, 100).toFixed(0),
+      clampValue(Number(switchSkipChancePercent) || 0, 0, 100).toFixed(0),
     );
-  };
-
-  const resetOnsetCounter = () => {
-    onsetCountForClip = 0;
-    onsetGateWasOpen = false;
   };
 
   const toggleEnvelopeGate = () => {
     envelopeGateEnabled = !envelopeGateEnabled;
-    resetOnsetCounter();
   };
 
   const buildTimeShapeCurve = (): VideoTimeShapeCurve => ({
@@ -479,7 +402,7 @@
     const audioTrigger = evaluateAudioTrigger(
       {
         enabled: true,
-        band: timeShaperBand,
+        band: "effectRange",
         threshold: $reactiveEnvelope.threshold,
         sensitivity: $reactiveEnvelope.sensitivity,
         detail: timeShaperDepth,
@@ -494,11 +417,11 @@
 
     const triggerActive =
       audioTrigger.status === "triggered" ||
-      $audioBands.envelopeB > $reactiveEnvelope.threshold ||
+      $audioBands.envelopeA > $reactiveEnvelope.threshold ||
       currentTimeShapePreset.id === "half-time";
 
     if (!triggerActive) {
-      timeShaperStatus = `TS armed · ${timeShaperBand.toUpperCase()} ${audioTrigger.score.toFixed(2)}`;
+      timeShaperStatus = `TS armed · FX ${timeShaperTriggerLabel} · ${audioTrigger.score.toFixed(2)}`;
       return;
     }
 
@@ -537,22 +460,11 @@
       0,
       Math.min(1, $automationRuntime.stutter),
     );
-    const speedMinBound = Math.max(
-      speedDomainMin,
-      Math.min($automationBounds.speedMin, $automationBounds.speedMax - 0.01),
-    );
-    const speedMaxBound = Math.min(
-      speedDomainMax,
-      Math.max($automationBounds.speedMax, speedMinBound + 0.01),
-    );
-    const stutterMinBound = Math.max(
-      0,
-      Math.min($automationBounds.stutterMin, $automationBounds.stutterMax - 0.001),
-    );
-    const stutterMaxBound = Math.min(
-      1,
-      Math.max($automationBounds.stutterMax, stutterMinBound + 0.001),
-    );
+    const normalizedAutomationBounds = normalizeAutomationBounds($automationBounds);
+    const speedMinBound = normalizedAutomationBounds.speedMin;
+    const speedMaxBound = normalizedAutomationBounds.speedMax;
+    const stutterMinBound = normalizedAutomationBounds.stutterMin;
+    const stutterMaxBound = normalizedAutomationBounds.stutterMax;
     const rampDepth = quantizeMode === "bar" ? 0.45 : 0.28;
     const automationRate = mapNormalizedToRange(
       automationSpeedNorm,
@@ -607,7 +519,6 @@
       if (!player.paused) {
         applySpeedRamp();
         applyTimeShaper();
-        maybeQuantizedSwitch();
       }
     };
 
@@ -618,16 +529,14 @@
     if (!player) return;
     ensurePlayableSelection();
     if (!selectedClipId) {
-      status = "No active clip available.";
+      uiStatus = "No active clip available.";
       return;
     }
     applySpeedRamp();
-    lastQuantizeSlot = getTransportSlotIndex();
     lastStutterPulseMs = Date.now();
-    resetOnsetCounter();
     startPlaybackLoop();
     await player.play();
-    status = `Playing ${currentClip?.name ?? "clip"}`;
+    uiStatus = `Playing ${currentClip?.name ?? "clip"}`;
   };
 
   const pause = () => {
@@ -637,7 +546,7 @@
     currentPlaybackRate = 1;
     lastStutterPulseMs = 0;
     timeShaperLastAppliedMs = 0;
-    status = "Paused";
+    uiStatus = "Paused";
   };
 
   const stop = () => {
@@ -650,9 +559,7 @@
     lastStutterPulseMs = 0;
     timeShaperLastAppliedMs = 0;
     currentTime = 0;
-    lastQuantizeSlot = -1;
-    resetOnsetCounter();
-    status = "Stopped";
+    uiStatus = "Stopped";
   };
 
   const toggleMuteLane = (lane: number) => {
@@ -692,7 +599,7 @@
       Video Matrix
     </h2>
     <p class="text-[0.6rem] m-0 truncate text-primary-500" aria-live="polite">
-      {status}
+      {authorityStatus || uiStatus}
     </p>
   </div>
 
@@ -842,6 +749,24 @@
         class="w-full max-h-full aspect-video bg-black rounded-sm border border-surface-900 relative flex overflow-hidden shadow-xl shadow-black/50 mx-auto"
       >
         <div class="absolute top-1 right-1 z-10 flex gap-1 pointer-events-none">
+          {#if switchNotice.state !== "idle"}
+            <div
+              class="max-w-56 px-2 py-1 rounded-sm border backdrop-blur-sm bg-surface-950/85 {switchNotice.state === 'hotReady'
+                ? 'border-emerald-500/70 text-emerald-200'
+                : switchNotice.state === 'warmingHold'
+                  ? 'border-amber-500/70 text-amber-100'
+                  : 'border-rose-500/70 text-rose-100'}"
+              data-testid="video-switch-notice"
+              title="Explicit hot-deck switch state so held frames never look like a silent freeze."
+            >
+              <div class="text-[0.5rem] uppercase tracking-[0.18em] font-bold">
+                {switchNotice.headline}
+              </div>
+              <div class="text-[0.56rem] normal-case leading-tight tracking-normal">
+                {switchNotice.detail}
+              </div>
+            </div>
+          {/if}
           <span
             class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-surface-800 rounded-sm font-mono backdrop-blur-sm"
             >C: {Math.max(1, currentClipIndex + 1)}</span
@@ -866,6 +791,7 @@
             src={currentClip.url}
             class="w-full h-full object-contain"
             playsinline
+            muted
             loop
             on:play={startPlaybackLoop}
             on:pause={stopPlaybackLoop}
@@ -888,7 +814,6 @@
             on:timeupdate={() => {
               currentTime = player?.currentTime ?? 0;
               applySpeedRamp();
-              maybeQuantizedSwitch();
             }}
           >
             <track
@@ -986,17 +911,13 @@
                 aria-label="TimeShaper mix amount"
                 title="Dry/wet amount for video time remapping. 0 keeps normal playback; 1 applies the full preset curve."
               />
-              <select
-                bind:value={timeShaperBand}
-                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
-                aria-label="TimeShaper audio band"
-                title="Audio band used to trigger TimeShaper movement. The bottom timeline curves still feed speed/stutter automation; this selects the live trigger band."
+              <div
+                class="rounded-sm border border-surface-700 bg-surface-950 px-1.5 py-0.5 text-[0.56rem] font-mono text-primary-200"
+                aria-label="TimeShaper trigger range"
+                title="TimeShaper now follows the Audio Reactive panel's draggable effect span instead of a separate low/mid/high/full selector."
               >
-                <option value="low">LOW</option>
-                <option value="mid">MID</option>
-                <option value="high">HIGH</option>
-                <option value="full">FULL</option>
-              </select>
+                FX {timeShaperTriggerLabel}
+              </div>
               <div
                 class="flex items-center gap-1"
                 data-testid="onset-progress-meter"
@@ -1107,8 +1028,18 @@
             preload="auto"
             class="hidden"
             aria-hidden="true"
-            on:canplay={() => { prewarmReady = true; }}
-            on:error={() => { prewarmReady = false; }}
+            on:loadstart={() => {
+              prewarmStatus = "warming";
+            }}
+            on:waiting={() => {
+              prewarmStatus = "warming";
+            }}
+            on:canplay={() => {
+              prewarmStatus = "ready";
+            }}
+            on:error={() => {
+              prewarmStatus = "failed";
+            }}
           ></video>
         {/if}
       </div>
