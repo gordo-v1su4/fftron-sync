@@ -108,6 +108,12 @@
   let spectrumCurvePath = "";
   let spectrumAreaPath = "";
   let selectedRangeLabel = "";
+  let selectedRangeRouting = describeEffectRangeRouting({
+    startHz: EFFECT_RANGE_MIN_HZ,
+    endHz: EFFECT_RANGE_MAX_HZ,
+  });
+  let activeRangeHandle: EffectRangeHandle | null = null;
+  let rangePointerCleanup: (() => void) | null = null;
   let onsetTransportPresentation = describeOnsetTransportState({
     progressCount: 0,
     target: 4,
@@ -999,6 +1005,10 @@
     area: spectrumAreaPath,
   } = buildSpectrumPaths(spectrumBars));
   $: selectedRangeLabel = `${formatFrequency(effectRangeStartHz)} – ${formatFrequency(effectRangeEndHz)}`;
+  $: selectedRangeRouting = describeEffectRangeRouting({
+    startHz: effectRangeStartHz,
+    endHz: effectRangeEndHz,
+  });
   $: onsetTransportPresentation = describeOnsetTransportState($onsetTransportState);
 
   $: if (
