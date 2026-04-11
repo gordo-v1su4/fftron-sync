@@ -13,7 +13,6 @@
   } from "$lib/video/hotDeckSwitchStatus";
   import {
     activeSection,
-    audioOnsets,
     audioRuntime,
     automationBounds,
     automationRuntime,
@@ -21,6 +20,7 @@
     reactiveEnvelope,
     tempoState,
   } from "$lib/stores/runtime";
+  import { videoDeckAuthority, type VideoDeckClipRecord } from "$lib/stores/videoDeck";
   import {
     SPEED_AUTOMATION_DOMAIN,
     clampValue,
@@ -38,20 +38,12 @@
     player.currentTime = Math.max(0, Math.min(t, duration || t));
   };
 
-  interface VideoClip {
-    id: string;
-    name: string;
-    url: string;
-    sizeMb: string;
-    lane: number;
-    slot: number;
-  }
-
-  let clips: VideoClip[] = [];
+  let clips: VideoDeckClipRecord[] = [];
   let selectedClipId = "";
   let player: HTMLVideoElement | null = null;
   let prewarmPlayer: HTMLVideoElement | null = null;
-  let status = "Drop or upload clips to begin playback.";
+  let authorityStatus = "";
+  let uiStatus = "Drop or upload clips to begin playback.";
   let envelopeGateEnabled = true;
   let speedRampEnabled = true;
   let timeShaperEnabled = true;
@@ -65,13 +57,11 @@
   let switchSkipChancePercent = 0;
   let onsetSwitchTarget = 4;
   let onsetCountForClip = 0;
-  let onsetGateWasOpen = false;
   const maxOnsetDots = 8;
   let currentPlaybackRate = 1;
   let currentAutomationRate = 1;
   let currentAutomationStutter = 0;
   let lastStutterPulseMs = 0;
-  let lastQuantizeSlot = -1;
   let playbackRafId = 0;
   let pendingSeekRatio: number | null = null;
   let resumeAfterSwitch = false;
@@ -186,20 +176,16 @@
   const makeId = (): string =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-  let currentClip: VideoClip | undefined = undefined;
+  let currentClip: VideoDeckClipRecord | undefined = undefined;
   let currentClipIndex = -1;
   let currentTimeShapePreset: TimeShapePreset = timeShapePresets[0];
-  let nextPrewarmClip: VideoClip | undefined = undefined;
-  let switchNotice = describeVideoDeckSwitchNotice({
-    autoSwitchEnabled,
-    playableClipCount: 0,
-    currentClipName: undefined,
-    nextClipName: undefined,
-    prewarmStatus,
-  });
+  let nextPrewarmClip: VideoDeckClipRecord | undefined = undefined;
   let timeShapePreviewPoints = "";
   let timeShapePreviewPhase = 0;
 
+  $: selectedClipId = $videoDeckAuthority.selectedClipId;
+  $: authorityStatus = $videoDeckAuthority.status;
+  $: onsetCountForClip = $videoDeckAuthority.onsetCountForClip;
   $: currentClip = clips.find((clip) => clip.id === selectedClipId);
   $: currentClipIndex = clips.findIndex((clip) => clip.id === selectedClipId);
   $: currentTimeShapePreset =
@@ -232,9 +218,26 @@
     const phase = (getBeatPosition() % cycle) / cycle;
     return Math.max(0, Math.min(100, phase * 100));
   })();
+  $: videoDeckAuthority.update((state) => ({
+    ...state,
+    clips,
+    laneMuted: [...laneMuted],
+    soloLane,
+    autoSwitchEnabled,
+    quantizeMode,
+    envelopeGateEnabled,
+    onsetSwitchTarget,
+    switchSkipChancePercent,
+    prewarmClipId,
+    prewarmReady,
+  }));
+  $: if (player && currentClip && player.currentSrc && !player.currentSrc.includes(currentClip.url)) {
+    pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
+    resumeAfterSwitch = !player.paused;
+  }
   const laneIsActive = (lane: number): boolean =>
     soloLane === null ? !laneMuted[lane] : soloLane === lane;
-  const playableClips = (): VideoClip[] =>
+  const playableClips = (): VideoDeckClipRecord[] =>
     clips
       .filter((clip) => laneIsActive(clip.lane))
       .sort((a, b) => (a.lane === b.lane ? a.slot - b.slot : a.lane - b.lane));
@@ -242,28 +245,31 @@
   const ensurePlayableSelection = () => {
     const playable = playableClips();
     if (playable.length === 0) {
-      selectedClipId = "";
+      videoDeckAuthority.update((state) => ({ ...state, selectedClipId: "" }));
       duration = 0;
       currentTime = 0;
       return;
     }
     if (!playable.some((clip) => clip.id === selectedClipId)) {
-      selectedClipId = playable[0].id;
+      videoDeckAuthority.update((state) => ({
+        ...state,
+        selectedClipId: playable[0].id,
+      }));
       duration = 0;
       currentTime = 0;
     }
   };
 
-  const clipAtMatrix = (row: number, col: number): VideoClip | undefined => {
+  const clipAtMatrix = (row: number, col: number): VideoDeckClipRecord | undefined => {
     if (clips.length === 0) return undefined;
     return clips.find((clip) => clip.lane === row && clip.slot === col);
   };
 
   const selectClip = (id: string) => {
-    selectedClipId = id;
+    videoDeckAuthority.update((state) => ({ ...state, selectedClipId: id }));
     duration = 0;
     currentTime = 0;
-    status = `Selected ${clips.find((clip) => clip.id === id)?.name ?? "clip"}`;
+    uiStatus = `Selected ${clips.find((clip) => clip.id === id)?.name ?? "clip"}`;
   };
 
   const uploadClips = (event: Event) => {
@@ -273,7 +279,7 @@
     ).filter((file) => file.type.startsWith("video/"));
 
     if (!files.length) {
-      status = "No video files detected in selection.";
+      uiStatus = "No video files detected in selection.";
       return;
     }
 
@@ -286,7 +292,7 @@
     );
 
     if (availableSlots.length === 0) {
-      status = `Layer ${uploadLane + 1} is full. Remove clips or upload to another layer.`;
+      uiStatus = `Layer ${uploadLane + 1} is full. Remove clips or upload to another layer.`;
       return;
     }
 
@@ -305,8 +311,10 @@
       a.lane === b.lane ? a.slot - b.slot : a.lane - b.lane,
     );
     ensurePlayableSelection();
-    if (!selectedClipId) selectedClipId = added[0].id;
-    status = droppedCount
+    if (!selectedClipId) {
+      videoDeckAuthority.update((state) => ({ ...state, selectedClipId: added[0].id }));
+    }
+    uiStatus = droppedCount
       ? `Loaded ${added.length} clip(s) to layer ${lane + 1}. ${droppedCount} clip(s) skipped.`
       : `Loaded ${added.length} clip${added.length > 1 ? "s" : ""} to layer ${lane + 1}`;
   };
@@ -317,51 +325,7 @@
     clips = clips.filter((entry) => entry.id !== id);
     ensurePlayableSelection();
     if (selectedClipId === id)
-      status = "Selected clip removed. Switched to next active clip.";
-  };
-
-  const getSlotDuration = (): number => {
-    const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
-    const beatDuration = 60 / bpm;
-    return quantizeMode === "bar" ? beatDuration * 4 : beatDuration;
-  };
-
-  const getTransportSlotIndex = (): number => {
-    const slotDuration = getSlotDuration();
-    if (!Number.isFinite(slotDuration) || slotDuration <= 0) return -1;
-    const elapsedSeconds = Math.max(
-      0,
-      (Date.now() - $tempoState.downbeatEpochMs) / 1000,
-    );
-    return Math.floor(elapsedSeconds / slotDuration);
-  };
-
-  const queueQuantizedSwitch = (slotIndex: number) => {
-    const playable = playableClips();
-    if (playable.length < 2 || !selectedClipId) return;
-    const currentIndex = playable.findIndex(
-      (clip) => clip.id === selectedClipId,
-    );
-    if (currentIndex < 0) {
-      selectedClipId = playable[0].id;
-      return;
-    }
-
-    const nextIndex = (currentIndex + 1) % playable.length;
-    const nextClip = playable[nextIndex];
-    if (prewarmClipId === nextClip.id && prewarmStatus !== "ready") {
-      status =
-        prewarmStatus === "failed"
-          ? `Cold fallback · ${nextClip.name} prewarm failed; holding ${currentClip?.name ?? "clip"} until a presentable frame exists`
-          : `Warming hold · ${nextClip.name} is not ready; holding ${currentClip?.name ?? "clip"} to avoid a frozen-looking switch`;
-      return;
-    }
-    pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
-    resumeAfterSwitch = Boolean(player && !player.paused);
-    selectedClipId = playable[nextIndex].id;
-    onsetCountForClip = 0;
-    onsetGateWasOpen = false;
-    status = `Quantized ${quantizeMode} switch after ${onsetSwitchTarget} onset(s): ${playable[nextIndex].name} (slot ${slotIndex})`;
+      uiStatus = "Selected clip removed. Switched to next active clip.";
   };
 
   const applyOnsetTarget = () => {
@@ -378,99 +342,14 @@
 
   const getFilledOnsetDots = (): number => Math.round(getOnsetProgress() * getOnsetDotCount());
 
-  const countEssentiaOnsets = (): number => {
-    const currentAudioTime = $audioRuntime.source === "file" ? $audioRuntime.currentTime : 0;
-    if (currentAudioTime <= 0) return 0;
-
-    let counted = 0;
-    audioOnsets.update((events) =>
-      events.map((event) => {
-        if (
-          event.source === "essentia" &&
-          !event.counted &&
-          event.timeSeconds <= currentAudioTime + 0.05
-        ) {
-          counted += 1;
-          return { ...event, counted: true as const };
-        }
-        return event;
-      }),
-    );
-
-    if (counted > 0) onsetCountForClip += counted;
-    return counted;
-  };
-
-  const registerOnsetIfNeeded = () => {
-    const essentiaCount = countEssentiaOnsets();
-    if (essentiaCount > 0) return true;
-
-    const gateOpen = $audioBands.envelopeA > $reactiveEnvelope.threshold;
-    if (gateOpen && !onsetGateWasOpen) {
-      onsetCountForClip += 1;
-      audioOnsets.update((events) =>
-        [
-          ...events,
-          {
-            id: `cnt-${Date.now()}-${events.length}`,
-            timestampMs: Date.now(),
-            timeSeconds: player?.currentTime ?? currentTime ?? 0,
-            band: timeShaperBand,
-            value: $audioBands.envelopeA,
-            threshold: $reactiveEnvelope.threshold,
-            counted: true,
-            source: "counted" as const,
-          },
-        ].slice(-256),
-      );
-    }
-    onsetGateWasOpen = gateOpen;
-    return gateOpen;
-  };
-
-  const maybeQuantizedSwitch = () => {
-    if (
-      !autoSwitchEnabled ||
-      !player ||
-      player.paused ||
-      playableClips().length < 2
-    )
-      return;
-    const countedOnset = envelopeGateEnabled ? registerOnsetIfNeeded() : true;
-    const slotIndex = getTransportSlotIndex();
-    if (slotIndex > lastQuantizeSlot) {
-      if (!envelopeGateEnabled && lastQuantizeSlot >= 0) onsetCountForClip += 1;
-      if (lastQuantizeSlot >= 0 && onsetCountForClip >= onsetSwitchTarget) {
-        const skipChance = clampValue(switchSkipChancePercent, 0, 100) / 100;
-        if (skipChance > 0 && Math.random() < skipChance) {
-          status = `Quantized ${quantizeMode} switch bypassed (${Math.round(skipChance * 100)}%) · onset ${onsetCountForClip}/${onsetSwitchTarget}`;
-          onsetCountForClip = 0;
-        } else {
-          queueQuantizedSwitch(slotIndex);
-        }
-      } else if (lastQuantizeSlot >= 0) {
-        status = countedOnset
-          ? `Holding ${currentClip?.name ?? "clip"}: onset ${onsetCountForClip}/${onsetSwitchTarget}`
-          : `Holding ${currentClip?.name ?? "clip"}: waiting for onset ${onsetCountForClip}/${onsetSwitchTarget}`;
-      }
-      lastQuantizeSlot = slotIndex;
-    }
-  };
-
   const applySwitchSkipChance = () => {
     switchSkipChancePercent = Number(
       clampValue(Number(switchSkipChancePercent) || 0, 0, 100).toFixed(0),
     );
   };
 
-  const resetOnsetCounter = () => {
-    onsetCountForClip = 0;
-    onsetGateWasOpen = false;
-  };
-
   const toggleEnvelopeGate = () => {
     envelopeGateEnabled = !envelopeGateEnabled;
-    resetOnsetCounter();
   };
 
   const buildTimeShapeCurve = (): VideoTimeShapeCurve => ({
@@ -618,7 +497,6 @@
       if (!player.paused) {
         applySpeedRamp();
         applyTimeShaper();
-        maybeQuantizedSwitch();
       }
     };
 
@@ -629,16 +507,14 @@
     if (!player) return;
     ensurePlayableSelection();
     if (!selectedClipId) {
-      status = "No active clip available.";
+      uiStatus = "No active clip available.";
       return;
     }
     applySpeedRamp();
-    lastQuantizeSlot = getTransportSlotIndex();
     lastStutterPulseMs = Date.now();
-    resetOnsetCounter();
     startPlaybackLoop();
     await player.play();
-    status = `Playing ${currentClip?.name ?? "clip"}`;
+    uiStatus = `Playing ${currentClip?.name ?? "clip"}`;
   };
 
   const pause = () => {
@@ -648,7 +524,7 @@
     currentPlaybackRate = 1;
     lastStutterPulseMs = 0;
     timeShaperLastAppliedMs = 0;
-    status = "Paused";
+    uiStatus = "Paused";
   };
 
   const stop = () => {
@@ -661,9 +537,7 @@
     lastStutterPulseMs = 0;
     timeShaperLastAppliedMs = 0;
     currentTime = 0;
-    lastQuantizeSlot = -1;
-    resetOnsetCounter();
-    status = "Stopped";
+    uiStatus = "Stopped";
   };
 
   const toggleMuteLane = (lane: number) => {
@@ -703,7 +577,7 @@
       Video Matrix
     </h2>
     <p class="text-[0.6rem] m-0 truncate text-primary-500" aria-live="polite">
-      {status}
+      {authorityStatus || uiStatus}
     </p>
   </div>
 
@@ -895,6 +769,7 @@
             src={currentClip.url}
             class="w-full h-full object-contain"
             playsinline
+            muted
             loop
             on:play={startPlaybackLoop}
             on:pause={stopPlaybackLoop}
@@ -917,7 +792,6 @@
             on:timeupdate={() => {
               currentTime = player?.currentTime ?? 0;
               applySpeedRamp();
-              maybeQuantizedSwitch();
             }}
           >
             <track
