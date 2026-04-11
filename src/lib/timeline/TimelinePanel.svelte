@@ -6,7 +6,9 @@
     automationBounds,
     automationRuntime,
     essentiaAnalysis,
+    liveDetectedOnsets,
     markers,
+    switchProgressEvents,
     waveformOverview,
   } from "$lib/stores/runtime";
   import { buildWaveformViewportPath } from "$lib/audio/wav";
@@ -883,7 +885,14 @@
     authoritative: authoritativeOnsetMarkers,
     liveFallback: liveDetectedOverlayMarkers,
     countedDebug: countedDebugOverlayMarkers
-  } = buildTimelineOnsetLanes($audioOnsets, safeDuration, viewportStart, viewportWindow));
+  } = buildTimelineOnsetLanes({
+    authoritative: $audioOnsets,
+    liveFallback: $liveDetectedOnsets,
+    countedDebug: $switchProgressEvents,
+    durationSeconds: safeDuration,
+    viewportStart,
+    viewportWindow,
+  }));
 
   $: sectionBands = timelineSections
     .map((section) => {
