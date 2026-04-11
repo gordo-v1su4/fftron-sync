@@ -260,6 +260,47 @@ export function advanceVideoDeckAuthority(
 let schedulerRefCount = 0;
 let schedulerStop: (() => void) | null = null;
 
+const clipsMatch = (
+  left: VideoDeckClipRecord[],
+  right: VideoDeckClipRecord[],
+): boolean => {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (
+      a.id !== b.id ||
+      a.name !== b.name ||
+      a.url !== b.url ||
+      a.sizeMb !== b.sizeMb ||
+      a.lane !== b.lane ||
+      a.slot !== b.slot
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const authorityStateMatches = (
+  left: VideoDeckAuthorityState,
+  right: VideoDeckAuthorityState,
+): boolean =>
+  left.selectedClipId === right.selectedClipId &&
+  left.prewarmClipId === right.prewarmClipId &&
+  left.prewarmReady === right.prewarmReady &&
+  left.autoSwitchEnabled === right.autoSwitchEnabled &&
+  left.quantizeMode === right.quantizeMode &&
+  left.envelopeGateEnabled === right.envelopeGateEnabled &&
+  left.onsetSwitchTarget === right.onsetSwitchTarget &&
+  left.switchSkipChancePercent === right.switchSkipChancePercent &&
+  left.onsetCountForClip === right.onsetCountForClip &&
+  left.status === right.status &&
+  left.soloLane === right.soloLane &&
+  left.laneMuted.length === right.laneMuted.length &&
+  left.laneMuted.every((value, index) => value === right.laneMuted[index]) &&
+  clipsMatch(left.clips, right.clips);
+
 export function startVideoDeckAuthorityScheduler(): () => void {
   schedulerRefCount += 1;
   if (schedulerStop) {
@@ -287,7 +328,7 @@ export function startVideoDeckAuthorityScheduler(): () => void {
     }, Math.random());
     authorityMeta = next.meta;
     updateOnsetTransportState(next.meta.schedulerState, next.state);
-    if (authoritySignature(next.state) === authoritySignature(authorityState)) {
+    if (authorityStateMatches(next.state, authorityState)) {
       return;
     }
     authorityState = next.state;
@@ -338,24 +379,6 @@ function stopVideoDeckAuthorityScheduler() {
   if (schedulerRefCount === 0) {
     schedulerStop?.();
   }
-}
-
-function authoritySignature(state: VideoDeckAuthorityState): string {
-  return JSON.stringify([
-    state.selectedClipId,
-    state.prewarmClipId,
-    state.prewarmReady,
-    state.autoSwitchEnabled,
-    state.quantizeMode,
-    state.envelopeGateEnabled,
-    state.onsetSwitchTarget,
-    state.switchSkipChancePercent,
-    state.onsetCountForClip,
-    state.status,
-    state.soloLane,
-    state.laneMuted,
-    state.clips.map((clip) => [clip.id, clip.lane, clip.slot]).join('|'),
-  ]);
 }
 
 export function resetVideoDeckAuthorityStore() {

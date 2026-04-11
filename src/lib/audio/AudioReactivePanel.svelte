@@ -114,6 +114,7 @@
   });
   let activeRangeHandle: EffectRangeHandle | null = null;
   let rangePointerCleanup: (() => void) | null = null;
+  let activeRangeRect: { left: number; width: number } | null = null;
   let onsetTransportPresentation = describeOnsetTransportState({
     progressCount: 0,
     target: 4,
@@ -216,12 +217,16 @@
     }
 
     let curve = `M ${points[0].x} ${points[0].y}`;
-    for (let index = 1; index < points.length; index += 1) {
-      const previous = points[index - 1];
+    for (let index = 1; index < points.length - 1; index += 1) {
       const current = points[index];
-      const controlX = (previous.x + current.x) / 2;
-      curve += ` Q ${controlX} ${previous.y} ${current.x} ${current.y}`;
+      const next = points[index + 1];
+      const midpointX = (current.x + next.x) / 2;
+      const midpointY = (current.y + next.y) / 2;
+      curve += ` Q ${current.x} ${current.y} ${midpointX} ${midpointY}`;
     }
+    const lastControl = points[points.length - 2];
+    const lastPoint = points[points.length - 1];
+    curve += ` Q ${lastControl.x} ${lastControl.y} ${lastPoint.x} ${lastPoint.y}`;
 
     return {
       curve,
@@ -295,8 +300,10 @@
     );
   };
 
-  const getRangePercentFromClientX = (clientX: number): number | null => {
-    const rect = rangeSelectorTrackEl?.getBoundingClientRect();
+  const getRangePercentFromClientX = (
+    clientX: number,
+    rect = activeRangeRect,
+  ): number | null => {
     if (!rect || rect.width <= 0) return null;
     return percentFromPointer(clientX, rect.left, rect.width);
   };
@@ -305,6 +312,7 @@
     rangePointerCleanup?.();
     rangePointerCleanup = null;
     activeRangeHandle = null;
+    activeRangeRect = null;
   };
 
   const beginRangePointerDrag = (
@@ -314,9 +322,12 @@
     if (!event.isPrimary) return;
     event.preventDefault();
     stopRangePointerDrag();
+    const rect = rangeSelectorTrackEl?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return;
     activeRangeHandle = handle;
+    activeRangeRect = { left: rect.left, width: rect.width };
     const applyFromPointer = (clientX: number) => {
-      const percent = getRangePercentFromClientX(clientX);
+      const percent = getRangePercentFromClientX(clientX, activeRangeRect);
       if (percent === null) return;
       updateEffectRangeHandle(handle, percent);
     };
