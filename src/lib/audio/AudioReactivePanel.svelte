@@ -8,11 +8,15 @@
     audioRuntime,
     detectedTempo,
     essentiaAnalysis,
+    liveDetectedOnsets,
     markers,
+    onsetTransportState,
     reactiveEnvelope,
     tempoState,
     timelineSeekRequest,
+    transportAlignment,
     waveformOverview,
+    switchProgressEvents,
   } from "$lib/stores/runtime";
   import {
     analyzeEssentiaFull,
@@ -276,7 +280,7 @@
 
   const pushDetectedOnset = (value: number, timestamp: number) => {
     const timeSeconds = audioElement && $audioRuntime.source === "file" ? audioElement.currentTime || 0 : 0;
-    audioOnsets.update((events) =>
+    liveDetectedOnsets.update((events) =>
       [
         ...events,
         {
@@ -439,6 +443,20 @@
     markers.set([]);
     activeSection.set("");
     audioOnsets.set([]);
+    liveDetectedOnsets.set([]);
+    switchProgressEvents.set([]);
+    transportAlignment.set({
+      firstBeatSeconds: 0,
+      source: "default",
+    });
+    onsetTransportState.set({
+      progressCount: 0,
+      target: 4,
+      armed: false,
+      blockedReason: null,
+      progressMode: "analyzed",
+      lastTransportSlot: null,
+    });
     essentiaAnalysis.set({
       bpm: null,
       confidence: null,
@@ -570,6 +588,10 @@
         source: "auto",
         downbeatEpochMs: Date.now() - firstBeatSeconds * 1000,
       }));
+      transportAlignment.set({
+        firstBeatSeconds,
+        source: "essentia",
+      });
       detectedTempo.set({
         bpm: full.bpm,
         confidence: normalizedConfidence,

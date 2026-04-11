@@ -61,6 +61,20 @@ export interface AudioOnsetEvent {
   source: 'essentia' | 'detected' | 'counted';
 }
 
+export interface TransportAlignmentState {
+  firstBeatSeconds: number;
+  source: 'default' | 'essentia';
+}
+
+export interface OnsetTransportState {
+  progressCount: number;
+  target: number;
+  armed: boolean;
+  blockedReason: string | null;
+  progressMode: 'analyzed' | 'detected-fallback' | 'quantized';
+  lastTransportSlot: number | null;
+}
+
 export const runtimeCapabilities = writable<RuntimeCapabilities>({
   webgl2: true,
   webgpu: false,
@@ -123,6 +137,20 @@ export const audioBands = writable<AudioBandState>({
 });
 
 export const audioOnsets = writable<AudioOnsetEvent[]>([]);
+export const liveDetectedOnsets = writable<AudioOnsetEvent[]>([]);
+export const switchProgressEvents = writable<AudioOnsetEvent[]>([]);
+export const transportAlignment = writable<TransportAlignmentState>({
+  firstBeatSeconds: 0,
+  source: 'default'
+});
+export const onsetTransportState = writable<OnsetTransportState>({
+  progressCount: 0,
+  target: 4,
+  armed: false,
+  blockedReason: null,
+  progressMode: 'analyzed',
+  lastTransportSlot: null
+});
 
 export const waveformOverview = writable<WaveformOverview | null>(null);
 export const timelineSeekRequest = writable<TimelineSeekRequest | null>(null);
