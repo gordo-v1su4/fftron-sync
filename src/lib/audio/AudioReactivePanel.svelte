@@ -53,6 +53,7 @@
     SPEED_AUTOMATION_DOMAIN,
     clampValue,
   } from "$lib/runtime/automationBounds";
+  import { describeOnsetTransportState } from "$lib/audio/onsetTransportStatus";
   import type { EngineCueMarker } from "$lib/types/timeline";
   import type { ReactiveBandTarget } from "$lib/types/engine";
   import { getEssentiaClientApiKey } from "$lib/config/essentia-env";
@@ -107,12 +108,14 @@
   let spectrumCurvePath = "";
   let spectrumAreaPath = "";
   let selectedRangeLabel = "";
-  let selectedRangeRouting = describeEffectRangeRouting({
-    startHz: EFFECT_RANGE_MIN_HZ,
-    endHz: EFFECT_RANGE_MAX_HZ,
+  let onsetTransportPresentation = describeOnsetTransportState({
+    progressCount: 0,
+    target: 4,
+    armed: false,
+    blockedReason: null,
+    progressMode: "analyzed",
+    lastTransportSlot: null,
   });
-  let activeRangeHandle: EffectRangeHandle | null = null;
-  let rangePointerCleanup: (() => void) | null = null;
 
   const normalizeSectionLabel = (label: string): string => {
     const clean = label
@@ -996,10 +999,7 @@
     area: spectrumAreaPath,
   } = buildSpectrumPaths(spectrumBars));
   $: selectedRangeLabel = `${formatFrequency(effectRangeStartHz)} – ${formatFrequency(effectRangeEndHz)}`;
-  $: selectedRangeRouting = describeEffectRangeRouting({
-    startHz: effectRangeStartHz,
-    endHz: effectRangeEndHz,
-  });
+  $: onsetTransportPresentation = describeOnsetTransportState($onsetTransportState);
 
   $: if (
     $timelineSeekRequest &&
@@ -1428,6 +1428,18 @@
       </div>
 
       <div class="flex flex-col gap-1 mt-1">
+        <div
+          class="rounded-sm border px-2 py-1 text-[0.55rem] font-mono uppercase tracking-wide {onsetTransportPresentation.tone === 'armed'
+            ? 'border-emerald-500/70 bg-emerald-500/10 text-emerald-100'
+            : onsetTransportPresentation.tone === 'warning'
+              ? 'border-amber-400/70 bg-amber-500/10 text-amber-100'
+              : 'border-surface-700 bg-surface-950 text-surface-300'}"
+          data-testid="onset-transport-status"
+          title="Authoritative onset transport state: analyzed markers remain authoritative, fallback is labeled, and armed/holding states stay explicit."
+        >
+          <div class="font-bold">{onsetTransportPresentation.headline}</div>
+          <div class="normal-case tracking-normal text-[0.52rem]">{onsetTransportPresentation.detail}</div>
+        </div>
         <div
           class="grid grid-cols-[60px_1fr] items-center gap-1 text-[0.6rem] uppercase text-surface-400 font-bold"
         >
