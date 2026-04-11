@@ -5,7 +5,12 @@ import {
   findPresetById,
   formatFrequency,
   frequencyToPercent,
-  percentToFrequency
+  moveEffectRangeHandle,
+  normalizeEffectRangePercents,
+  nudgeEffectRangeHandle,
+  percentFromPointer,
+  percentToFrequency,
+  resolveNearestEffectRangeHandle
 } from './frequencyRange';
 
 describe('frequencyRange helpers', () => {
@@ -35,5 +40,52 @@ describe('frequencyRange helpers', () => {
     expect(findPresetById('mid').label).toBe('Mid');
     expect(formatFrequency(120)).toBe('120 Hz');
     expect(formatFrequency(2_400)).toBe('2.4 kHz');
+  });
+
+  it('normalizes dual-handle percentages without letting the handles invert', () => {
+    expect(normalizeEffectRangePercents(88, 12)).toEqual({
+      startPercent: 10,
+      endPercent: 12
+    });
+  });
+
+  it('moves and nudges handles while preserving the minimum gap', () => {
+    expect(
+      moveEffectRangeHandle(
+        { startPercent: 24, endPercent: 60 },
+        'start',
+        59.5
+      )
+    ).toEqual({
+      startPercent: 58,
+      endPercent: 60
+    });
+
+    expect(
+      nudgeEffectRangeHandle(
+        { startPercent: 24, endPercent: 60 },
+        'end',
+        -40
+      )
+    ).toEqual({
+      startPercent: 24,
+      endPercent: 26
+    });
+  });
+
+  it('maps pointer positions and chooses the nearest drag handle deterministically', () => {
+    expect(percentFromPointer(150, 100, 200)).toBeCloseTo(25);
+    expect(
+      resolveNearestEffectRangeHandle(
+        { startPercent: 20, endPercent: 72 },
+        28
+      )
+    ).toBe('start');
+    expect(
+      resolveNearestEffectRangeHandle(
+        { startPercent: 20, endPercent: 72 },
+        66
+      )
+    ).toBe('end');
   });
 });

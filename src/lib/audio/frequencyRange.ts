@@ -16,8 +16,16 @@ export interface EffectRangeRoutingSummary {
   detail: string;
 }
 
+export interface EffectRangePercents {
+  startPercent: number;
+  endPercent: number;
+}
+
+export type EffectRangeHandle = 'start' | 'end';
+
 export const EFFECT_RANGE_MIN_HZ = 20;
 export const EFFECT_RANGE_MAX_HZ = 14_000;
+export const MIN_EFFECT_RANGE_GAP_PERCENT = 2;
 
 export const FREQUENCY_PRESETS: readonly FrequencyPreset[] = [
   { id: 'low', label: 'Low', startHz: 20, endHz: 180 },
@@ -51,6 +59,81 @@ export const percentToFrequency = (percent: number): number => {
   const value = 10 ** (logMin + (safePercent / 100) * logSpan);
   return clamp(value, EFFECT_RANGE_MIN_HZ, EFFECT_RANGE_MAX_HZ);
 };
+
+export const normalizeEffectRangePercents = (
+  startPercent: number,
+  endPercent: number,
+  minimumGapPercent = MIN_EFFECT_RANGE_GAP_PERCENT
+): EffectRangePercents => {
+  const safeGap = clamp(minimumGapPercent, 0, 100);
+  const clampedStart = clamp(startPercent, 0, 100 - safeGap);
+  const clampedEnd = clamp(endPercent, safeGap, 100);
+  const orderedStart = Math.min(clampedStart, clampedEnd - safeGap);
+  const orderedEnd = Math.max(clampedEnd, orderedStart + safeGap);
+
+  return {
+    startPercent: orderedStart,
+    endPercent: orderedEnd
+  };
+};
+
+export const moveEffectRangeHandle = (
+  range: EffectRangePercents,
+  handle: EffectRangeHandle,
+  nextPercent: number,
+  minimumGapPercent = MIN_EFFECT_RANGE_GAP_PERCENT
+): EffectRangePercents => {
+  const normalized = normalizeEffectRangePercents(
+    range.startPercent,
+    range.endPercent,
+    minimumGapPercent
+  );
+  const safeGap = Math.max(0, Math.min(minimumGapPercent, 100));
+
+  if (handle === 'start') {
+    const startPercent = clamp(nextPercent, 0, normalized.endPercent - safeGap);
+    return {
+      startPercent,
+      endPercent: normalized.endPercent
+    };
+  }
+
+  const endPercent = clamp(nextPercent, normalized.startPercent + safeGap, 100);
+  return {
+    startPercent: normalized.startPercent,
+    endPercent
+  };
+};
+
+export const nudgeEffectRangeHandle = (
+  range: EffectRangePercents,
+  handle: EffectRangeHandle,
+  deltaPercent: number,
+  minimumGapPercent = MIN_EFFECT_RANGE_GAP_PERCENT
+): EffectRangePercents =>
+  moveEffectRangeHandle(
+    range,
+    handle,
+    (handle === 'start' ? range.startPercent : range.endPercent) + deltaPercent,
+    minimumGapPercent
+  );
+
+export const percentFromPointer = (
+  clientX: number,
+  trackLeft: number,
+  trackWidth: number
+): number => {
+  if (!Number.isFinite(trackWidth) || trackWidth <= 0) return 0;
+  return clamp(((clientX - trackLeft) / trackWidth) * 100, 0, 100);
+};
+
+export const resolveNearestEffectRangeHandle = (
+  range: EffectRangePercents,
+  percent: number
+): EffectRangeHandle =>
+  Math.abs(percent - range.startPercent) <= Math.abs(percent - range.endPercent)
+    ? 'start'
+    : 'end';
 
 export const findPresetById = (id: ReactiveBandTarget): FrequencyPreset =>
   FREQUENCY_PRESETS.find((preset) => preset.id === id) ?? FREQUENCY_PRESETS[FREQUENCY_PRESETS.length - 1];
