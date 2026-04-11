@@ -58,6 +58,8 @@ export interface AudioBandState {
 
 export interface ReactiveEnvelopeState {
   target: ReactiveBandTarget;
+  rangeStartHz: number;
+  rangeEndHz: number;
   attackMs: number;
   releaseMs: number;
   threshold: number;

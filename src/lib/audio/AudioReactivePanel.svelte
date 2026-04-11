@@ -30,6 +30,18 @@
     isLikelyWavFile,
   } from "$lib/audio/wav";
   import {
+    clampFrequencyRange,
+    derivePresetTarget,
+    EFFECT_RANGE_MAX_HZ,
+    EFFECT_RANGE_MIN_HZ,
+    findPresetById,
+    formatFrequency,
+    FREQUENCY_PRESETS,
+    frequencyToPercent,
+    percentToFrequency,
+    type FrequencyRange,
+  } from "$lib/audio/frequencyRange";
+  import {
     SPEED_AUTOMATION_DOMAIN,
     clampValue,
   } from "$lib/runtime/automationBounds";
@@ -37,9 +49,11 @@
   import type { ReactiveBandTarget } from "$lib/types/engine";
   import { getEssentiaClientApiKey } from "$lib/config/essentia-env";
 
-  const targets: ReactiveBandTarget[] = ["low", "mid", "high", "full"];
   const defaultEssentiaApiKey = getEssentiaClientApiKey();
   const waveformResolution = 4096;
+  const spectrumPathWidth = 640;
+  const spectrumPathHeight = 136;
+  const minimumHandleGapPercent = 2;
 
   let audioElement: HTMLAudioElement | null = null;
   let fileInput: HTMLInputElement | null = null;
@@ -63,6 +77,10 @@
   let detectionRequestId = 0;
 
   let target: ReactiveBandTarget = "full";
+  let effectRangeStartHz = EFFECT_RANGE_MIN_HZ;
+  let effectRangeEndHz = EFFECT_RANGE_MAX_HZ;
+  let rangeStartPercent = 0;
+  let rangeEndPercent = 100;
   let attackMs = 27;
   let releaseMs = 190;
   let threshold = 0.12;
@@ -77,6 +95,9 @@
   let envelopeA = 0;
   let envelopeB = 0;
   let lastHandledSeekRequestId = 0;
+  let spectrumCurvePath = "";
+  let spectrumAreaPath = "";
+  let selectedRangeLabel = "";
 
   const normalizeSectionLabel = (label: string): string => {
     const clean = label
@@ -145,9 +166,94 @@
     }
   };
 
+  const buildSpectrumPaths = (values: number[]) => {
+    if (values.length === 0) {
+      return {
+        curve: "",
+        area: "",
+      };
+    }
+
+    const points = values.map((value, index) => {
+      const x =
+        values.length === 1
+          ? spectrumPathWidth / 2
+          : (index / (values.length - 1)) * spectrumPathWidth;
+      const y = spectrumPathHeight - clampValue(value, 0, 1) * spectrumPathHeight;
+      return { x, y };
+    });
+
+    if (points.length === 1) {
+      const point = points[0];
+      return {
+        curve: `M ${point.x} ${point.y}`,
+        area: `M ${point.x} ${spectrumPathHeight} L ${point.x} ${point.y} L ${point.x} ${spectrumPathHeight} Z`,
+      };
+    }
+
+    let curve = `M ${points[0].x} ${points[0].y}`;
+    for (let index = 1; index < points.length; index += 1) {
+      const previous = points[index - 1];
+      const current = points[index];
+      const controlX = (previous.x + current.x) / 2;
+      curve += ` Q ${controlX} ${previous.y} ${current.x} ${current.y}`;
+    }
+
+    return {
+      curve,
+      area: `${curve} L ${spectrumPathWidth} ${spectrumPathHeight} L 0 ${spectrumPathHeight} Z`,
+    };
+  };
+
+  const syncEffectRange = (nextRange: FrequencyRange) => {
+    const normalized = clampFrequencyRange(nextRange.startHz, nextRange.endHz);
+    effectRangeStartHz = normalized.startHz;
+    effectRangeEndHz = normalized.endHz;
+    rangeStartPercent = frequencyToPercent(normalized.startHz);
+    rangeEndPercent = frequencyToPercent(normalized.endHz);
+    target = derivePresetTarget(normalized);
+  };
+
+  const applyEffectRangeFromPercents = (startPercent: number, endPercent: number) => {
+    const clampedStart = clampValue(startPercent, 0, 100 - minimumHandleGapPercent);
+    const clampedEnd = clampValue(endPercent, minimumHandleGapPercent, 100);
+    const orderedStart = Math.min(clampedStart, clampedEnd - minimumHandleGapPercent);
+    const orderedEnd = Math.max(clampedEnd, orderedStart + minimumHandleGapPercent);
+    syncEffectRange({
+      startHz: percentToFrequency(orderedStart),
+      endHz: percentToFrequency(orderedEnd),
+    });
+    applyEnvelopeSettings();
+  };
+
+  const selectPresetRange = (presetId: ReactiveBandTarget) => {
+    const preset = findPresetById(presetId);
+    syncEffectRange({
+      startHz: preset.startHz,
+      endHz: preset.endHz,
+    });
+    applyEnvelopeSettings();
+  };
+
+  const handleRangeStartInput = (event: Event) => {
+    applyEffectRangeFromPercents(
+      (event.currentTarget as HTMLInputElement).valueAsNumber,
+      rangeEndPercent,
+    );
+  };
+
+  const handleRangeEndInput = (event: Event) => {
+    applyEffectRangeFromPercents(
+      rangeStartPercent,
+      (event.currentTarget as HTMLInputElement).valueAsNumber,
+    );
+  };
+
   const applyEnvelopeSettings = () => {
     reactiveEnvelope.set({
       target,
+      rangeStartHz: effectRangeStartHz,
+      rangeEndHz: effectRangeEndHz,
       attackMs,
       releaseMs,
       threshold,
@@ -322,16 +428,8 @@
       const low = bandAverage(20, 180);
       const mid = bandAverage(180, 2000);
       const high = bandAverage(2000, 10000);
-      const full = bandAverage(20, 14000);
-
-      const targetedRaw =
-        target === "low"
-          ? low
-          : target === "mid"
-            ? mid
-            : target === "high"
-              ? high
-              : full;
+      const full = bandAverage(EFFECT_RANGE_MIN_HZ, EFFECT_RANGE_MAX_HZ);
+      const targetedRaw = bandAverage(effectRangeStartHz, effectRangeEndHz);
       const scaledTarget = clampValue(
         ((targetedRaw - threshold) / Math.max(0.01, 1 - threshold)) *
           sensitivity,
@@ -664,14 +762,24 @@
   };
 
   onMount(() => {
+    essentiaApiKey = defaultEssentiaApiKey;
+    syncEffectRange({
+      startHz: $reactiveEnvelope.rangeStartHz,
+      endHz: $reactiveEnvelope.rangeEndHz,
+    });
     applyEnvelopeSettings();
     startFftLoop();
-    essentiaApiKey = defaultEssentiaApiKey;
     speedMinValue = $automationBounds.speedMin;
     speedMaxValue = $automationBounds.speedMax;
     stutterMinValue = $automationBounds.stutterMin;
     stutterMaxValue = $automationBounds.stutterMax;
   });
+
+  $: ({
+    curve: spectrumCurvePath,
+    area: spectrumAreaPath,
+  } = buildSpectrumPaths(spectrumBars));
+  $: selectedRangeLabel = `${formatFrequency(effectRangeStartHz)} – ${formatFrequency(effectRangeEndHz)}`;
 
   $: if (
     $timelineSeekRequest &&
@@ -823,23 +931,29 @@
       </div>
 
       <div
-        class="grid grid-cols-[auto_minmax(0,132px)_auto_46px_auto_46px] items-center justify-start gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm"
+        class="grid grid-cols-[minmax(0,1fr)_auto_46px_auto_46px] items-center gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm"
       >
-        <label
-          for="reactive-target"
-          class="text-surface-500 uppercase font-bold text-[0.55rem]"
-          >Node</label
-        >
-        <select
-          id="reactive-target"
-          bind:value={target}
-          on:change={applyEnvelopeSettings}
-          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm outline-none max-w-[132px]"
-        >
-          {#each targets as option}
-            <option value={option}>{option}</option>
-          {/each}
-        </select>
+        <div class="flex min-w-0 flex-col gap-1">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-surface-500 uppercase font-bold text-[0.55rem]"
+              >Effect Range</span
+            >
+            <span class="truncate text-[0.58rem] font-mono text-primary-300"
+              >{target.toUpperCase()} · {selectedRangeLabel}</span
+            >
+          </div>
+          <div class="flex flex-wrap gap-1">
+            {#each FREQUENCY_PRESETS as preset}
+              <button
+                class="rounded-sm border px-1.5 py-0.5 text-[0.52rem] font-bold uppercase tracking-wide {target === preset.id
+                  ? 'border-primary-500 bg-primary-500/15 text-primary-300'
+                  : 'border-surface-700 bg-surface-900 text-surface-400 hover:bg-surface-800'}"
+                aria-pressed={target === preset.id}
+                on:click={() => selectPresetRange(preset.id)}>{preset.label}</button
+              >
+            {/each}
+          </div>
+        </div>
         <label
           for="reactive-attack"
           class="text-surface-500 uppercase font-bold text-[0.55rem]"
@@ -910,38 +1024,114 @@
       <div
         class="bg-surface-950 border border-surface-800 rounded-sm p-1 flex flex-col gap-1"
         data-testid="fft-analyzer-visual"
-        title="FFT analyzer: bars show captured spectrum energy, the amber line is the trigger threshold, and the selected node is emphasized by the envelope meters below."
+        title="FFT analyzer: the smoothed curve shows captured spectrum energy, Low/Mid/High regions stay labeled, and the highlighted frequency span drives the live effect envelope."
       >
         <div class="flex items-center justify-between text-[0.55rem] uppercase font-bold text-surface-400">
           <span>FFT Analyzer</span>
-          <span class="font-mono text-primary-300">{target.toUpperCase()} · Thr {threshold.toFixed(2)}</span>
+          <span class="font-mono text-primary-300">{selectedRangeLabel} · Thr {threshold.toFixed(2)}</span>
         </div>
-        <div class="relative h-20 overflow-hidden rounded-sm border border-surface-800 bg-surface-950">
+        <div class="relative h-32 overflow-hidden rounded-sm border border-surface-800 bg-surface-950">
+          <div class="absolute inset-0">
+            {#each FREQUENCY_PRESETS.filter((preset) => preset.id !== "full") as preset}
+              <div
+                class="absolute inset-y-0 border-r border-surface-800/60 text-[0.5rem] font-bold uppercase tracking-[0.2em] text-surface-500/85"
+                style={`left:${frequencyToPercent(preset.startHz)}%; width:${frequencyToPercent(preset.endHz) - frequencyToPercent(preset.startHz)}%`}
+              >
+                <span class="absolute left-2 top-2">{preset.label}</span>
+              </div>
+            {/each}
+          </div>
           <div
-            class="absolute left-0 right-0 border-t border-primary-400/80"
+            class="absolute inset-y-0 rounded-sm border border-primary-400/65 bg-primary-500/10 shadow-[inset_0_0_24px_rgba(245,158,11,0.18)]"
+            style={`left:${rangeStartPercent}%; width:${Math.max(0, rangeEndPercent - rangeStartPercent)}%`}
+          ></div>
+          <div
+            class="absolute left-0 right-0 border-t border-primary-400/70"
             style={`bottom:${threshold * 100}%`}
           ></div>
-          <div class="absolute inset-0 flex items-end gap-[2px] px-1 pb-1">
-            {#each spectrumBars as bar, index}
-              <div
-                class="flex-1 rounded-t-[1px] {index < 4
-                  ? 'bg-emerald-400/75'
-                  : index < 18
-                    ? 'bg-primary-400/75'
-                    : 'bg-cyan-300/70'}"
-                style={`height:${Math.max(2, bar * 100)}%`}
-              ></div>
-            {/each}
+          <svg class="absolute inset-0 h-full w-full" viewBox={`0 0 ${spectrumPathWidth} ${spectrumPathHeight}`} preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="fft-area-gradient" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stop-color="rgba(96,165,250,0.35)" />
+                <stop offset="100%" stop-color="rgba(96,165,250,0.02)" />
+              </linearGradient>
+            </defs>
+            <path d={spectrumAreaPath} fill="url(#fft-area-gradient)"></path>
+            <path
+              d={spectrumCurvePath}
+              fill="none"
+              stroke="rgba(125,211,252,0.95)"
+              stroke-linejoin="round"
+              stroke-linecap="round"
+              stroke-width="4"
+            ></path>
+          </svg>
+          <div
+            class="pointer-events-none absolute -top-0.5 -translate-x-1/2 rounded-sm border border-primary-500/60 bg-surface-950/95 px-1 py-0.5 text-[0.5rem] font-mono text-primary-200 shadow-[0_0_12px_rgba(245,158,11,0.2)]"
+            style={`left:${rangeStartPercent}%`}
+          >
+            {formatFrequency(effectRangeStartHz)}
+          </div>
+          <div
+            class="pointer-events-none absolute -top-0.5 -translate-x-1/2 rounded-sm border border-primary-500/60 bg-surface-950/95 px-1 py-0.5 text-[0.5rem] font-mono text-primary-200 shadow-[0_0_12px_rgba(245,158,11,0.2)]"
+            style={`left:${rangeEndPercent}%`}
+          >
+            {formatFrequency(effectRangeEndHz)}
           </div>
           {#if Date.now() - lastDetectedOnsetMs < 180}
             <div class="absolute inset-0 border border-primary-300 shadow-[inset_0_0_20px_rgba(245,158,11,0.35)]"></div>
           {/if}
         </div>
-        <div class="grid grid-cols-4 gap-1 text-[0.55rem] font-mono text-surface-400">
-          <span class={target === "low" ? "text-emerald-300" : ""}>LOW {$audioBands.low.toFixed(2)}</span>
-          <span class={target === "mid" ? "text-primary-300" : ""}>MID {$audioBands.mid.toFixed(2)}</span>
-          <span class={target === "high" ? "text-cyan-300" : ""}>HIGH {$audioBands.high.toFixed(2)}</span>
-          <span class={target === "full" ? "text-primary-300" : ""}>FULL {$audioBands.full.toFixed(2)}</span>
+        <div class="grid grid-cols-[1fr_auto] gap-2 text-[0.55rem] font-mono text-surface-400">
+          <div class="grid grid-cols-4 gap-1">
+            <span class={target === "low" ? "text-emerald-300" : ""}>LOW {$audioBands.low.toFixed(2)}</span>
+            <span class={target === "mid" ? "text-primary-300" : ""}>MID {$audioBands.mid.toFixed(2)}</span>
+            <span class={target === "high" ? "text-cyan-300" : ""}>HIGH {$audioBands.high.toFixed(2)}</span>
+            <span class={target === "full" ? "text-primary-300" : ""}>FULL {$audioBands.full.toFixed(2)}</span>
+          </div>
+          <span class="text-primary-200">DRV {$audioBands.envelopeA.toFixed(2)}</span>
+        </div>
+        <div
+          class="relative rounded-sm border border-surface-800 bg-surface-950 px-2 py-2"
+          data-testid="fft-range-selector"
+        >
+          <div class="mb-2 flex items-center justify-between text-[0.52rem] uppercase tracking-wide text-surface-500">
+            <label for="effect-range-start" class="font-bold">Effect span</label>
+            <span class="font-mono text-primary-300">{selectedRangeLabel}</span>
+          </div>
+          <div class="relative h-8">
+            <div class="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-surface-800"></div>
+            <div
+              class="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-primary-400 shadow-[0_0_10px_rgba(245,158,11,0.4)]"
+              style={`left:${rangeStartPercent}%; width:${Math.max(0, rangeEndPercent - rangeStartPercent)}%`}
+            ></div>
+            <input
+              id="effect-range-start"
+              type="range"
+              min="0"
+              max="100"
+              step="0.5"
+              value={rangeStartPercent}
+              on:input={handleRangeStartInput}
+              class="absolute inset-0 h-full w-full cursor-ew-resize appearance-none bg-transparent accent-primary-400"
+              aria-label="Effect range start frequency"
+            />
+            <input
+              id="effect-range-end"
+              type="range"
+              min="0"
+              max="100"
+              step="0.5"
+              value={rangeEndPercent}
+              on:input={handleRangeEndInput}
+              class="absolute inset-0 h-full w-full cursor-ew-resize appearance-none bg-transparent accent-primary-300"
+              aria-label="Effect range end frequency"
+            />
+          </div>
+          <div class="mt-1 flex items-center justify-between text-[0.5rem] font-mono text-surface-500">
+            <span>{formatFrequency(EFFECT_RANGE_MIN_HZ)}</span>
+            <span>{formatFrequency(EFFECT_RANGE_MAX_HZ)}</span>
+          </div>
         </div>
       </div>
 

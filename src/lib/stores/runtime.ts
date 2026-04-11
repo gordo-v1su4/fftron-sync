@@ -120,6 +120,8 @@ export const audioRuntime = writable<AudioRuntimeState>({
 
 export const reactiveEnvelope = writable<ReactiveEnvelopeState>({
   target: 'full',
+  rangeStartHz: 20,
+  rangeEndHz: 14000,
   attackMs: 27,
   releaseMs: 190,
   threshold: 0.12,
