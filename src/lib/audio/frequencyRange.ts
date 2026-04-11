@@ -10,6 +10,12 @@ export interface FrequencyPreset extends FrequencyRange {
   label: string;
 }
 
+export interface EffectRangeRoutingSummary {
+  target: ReactiveBandTarget;
+  label: string;
+  detail: string;
+}
+
 export const EFFECT_RANGE_MIN_HZ = 20;
 export const EFFECT_RANGE_MAX_HZ = 14_000;
 
@@ -78,6 +84,39 @@ export const derivePresetTarget = (range: FrequencyRange): ReactiveBandTarget =>
   return bestPresetCoverage >= 0.5 && bestRangeCoverage >= 0.6 && strongOverlapCount === 1
     ? selected
     : 'full';
+};
+
+export const describeEffectRangeRouting = (range: FrequencyRange): EffectRangeRoutingSummary => {
+  const normalized = clampFrequencyRange(range.startHz, range.endHz);
+  const target = derivePresetTarget(normalized);
+  const spanLabel = `${formatFrequency(normalized.startHz)} – ${formatFrequency(normalized.endHz)}`;
+
+  switch (target) {
+    case 'low':
+      return {
+        target,
+        label: 'Low focus',
+        detail: `Envelope A follows the exact low-band span ${spanLabel}.`
+      };
+    case 'mid':
+      return {
+        target,
+        label: 'Mid focus',
+        detail: `Envelope A follows the exact mid-band span ${spanLabel}.`
+      };
+    case 'high':
+      return {
+        target,
+        label: 'High focus',
+        detail: `Envelope A follows the exact high-band span ${spanLabel}.`
+      };
+    default:
+      return {
+        target: 'full',
+        label: 'Wide/custom span',
+        detail: `Envelope A follows the exact selected span ${spanLabel}; Low/Mid/High labels are descriptive only.`
+      };
+  }
 };
 
 export const formatFrequency = (hz: number): string =>
