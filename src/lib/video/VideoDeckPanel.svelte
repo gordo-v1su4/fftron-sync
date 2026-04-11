@@ -8,14 +8,24 @@
     type VideoTimeShapeStepMode,
   } from "$lib/runtime/time-shaper";
   import {
+    advanceOnsetSwitchScheduler,
+    carryOnsetSwitchSchedulerState,
+    computeTransportSlotIndex,
+    createOnsetSwitchSchedulerState,
+  } from "$lib/runtime/decks/onsetSwitchScheduler";
+  import {
     activeSection,
     audioOnsets,
     audioRuntime,
     automationBounds,
     automationRuntime,
     audioBands,
+    liveDetectedOnsets,
+    onsetTransportState,
     reactiveEnvelope,
     tempoState,
+    transportAlignment,
+    switchProgressEvents,
   } from "$lib/stores/runtime";
   import {
     SPEED_AUTOMATION_DOMAIN,
@@ -61,13 +71,12 @@
   let switchSkipChancePercent = 0;
   let onsetSwitchTarget = 4;
   let onsetCountForClip = 0;
-  let onsetGateWasOpen = false;
+  let onsetSchedulerState = createOnsetSwitchSchedulerState(onsetSwitchTarget);
   const maxOnsetDots = 8;
   let currentPlaybackRate = 1;
   let currentAutomationRate = 1;
   let currentAutomationStutter = 0;
   let lastStutterPulseMs = 0;
-  let lastQuantizeSlot = -1;
   let playbackRafId = 0;
   let pendingSeekRatio: number | null = null;
   let resumeAfterSwitch = false;
@@ -302,50 +311,60 @@
       status = "Selected clip removed. Switched to next active clip.";
   };
 
-  const getSlotDuration = (): number => {
-    const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
-    const beatDuration = 60 / bpm;
-    return quantizeMode === "bar" ? beatDuration * 4 : beatDuration;
-  };
-
   const getTransportSlotIndex = (): number => {
-    const slotDuration = getSlotDuration();
-    if (!Number.isFinite(slotDuration) || slotDuration <= 0) return -1;
-    const elapsedSeconds = Math.max(
-      0,
-      (Date.now() - $tempoState.downbeatEpochMs) / 1000,
+    const transportTime =
+      $audioRuntime.source === "file" ? $audioRuntime.currentTime : 0;
+    return computeTransportSlotIndex(
+      transportTime,
+      $tempoState.bpm || 120,
+      $transportAlignment.firstBeatSeconds,
+      quantizeMode,
     );
-    return Math.floor(elapsedSeconds / slotDuration);
   };
 
-  const queueQuantizedSwitch = (slotIndex: number) => {
+  const getNextSwitchCandidate = () => {
     const playable = playableClips();
-    if (playable.length < 2 || !selectedClipId) return;
-    const currentIndex = playable.findIndex(
-      (clip) => clip.id === selectedClipId,
-    );
-    if (currentIndex < 0) {
-      selectedClipId = playable[0].id;
-      return;
-    }
+    if (playable.length < 2 || !selectedClipId) return null;
+
+    const currentIndex = playable.findIndex((clip) => clip.id === selectedClipId);
+    if (currentIndex < 0) return null;
 
     const nextIndex = (currentIndex + 1) % playable.length;
     const nextClip = playable[nextIndex];
-    if (prewarmClipId === nextClip.id && !prewarmReady) {
-      status = `Warming ${nextClip.name}; holding ${currentClip?.name ?? "clip"} to avoid frozen switch`;
-      return;
+    if (!nextClip) return null;
+
+    return {
+      playable,
+      nextClip,
+      nextIndex,
+      ready: prewarmClipId !== nextClip.id || prewarmReady,
+    };
+  };
+
+  const queueQuantizedSwitch = (slotIndex: number) => {
+    const candidate = getNextSwitchCandidate();
+    if (!candidate) return false;
+
+    if (!candidate.ready) {
+      status = `Warming ${candidate.nextClip.name}; holding ${currentClip?.name ?? "clip"} to avoid frozen switch`;
+      return false;
     }
     pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
     resumeAfterSwitch = Boolean(player && !player.paused);
-    selectedClipId = playable[nextIndex].id;
+    selectedClipId = candidate.playable[candidate.nextIndex].id;
     onsetCountForClip = 0;
-    onsetGateWasOpen = false;
-    status = `Quantized ${quantizeMode} switch after ${onsetSwitchTarget} onset(s): ${playable[nextIndex].name} (slot ${slotIndex})`;
+    status = `Quantized ${quantizeMode} switch after ${onsetSwitchTarget} onset(s): ${candidate.playable[candidate.nextIndex].name} (slot ${slotIndex})`;
+    return true;
   };
 
   const applyOnsetTarget = () => {
     onsetSwitchTarget = Math.max(1, Math.min(32, Math.round(Number(onsetSwitchTarget) || 1)));
     onsetCountForClip = Math.min(onsetCountForClip, onsetSwitchTarget);
+    onsetSchedulerState = {
+      ...onsetSchedulerState,
+      target: onsetSwitchTarget,
+      progressCount: Math.min(onsetSchedulerState.progressCount, onsetSwitchTarget),
+    };
   };
 
   const getOnsetProgress = (): number =>
@@ -357,54 +376,43 @@
 
   const getFilledOnsetDots = (): number => Math.round(getOnsetProgress() * getOnsetDotCount());
 
-  const countEssentiaOnsets = (): number => {
-    const currentAudioTime = $audioRuntime.source === "file" ? $audioRuntime.currentTime : 0;
-    if (currentAudioTime <= 0) return 0;
+  const appendProgressEvents = (
+    events: Array<{
+      id: string;
+      timeSeconds: number;
+      band: "low" | "mid" | "high" | "full";
+      value: number;
+      threshold: number;
+    }>,
+  ) => {
+    if (events.length === 0) return;
 
-    let counted = 0;
-    audioOnsets.update((events) =>
-      events.map((event) => {
-        if (
-          event.source === "essentia" &&
-          !event.counted &&
-          event.timeSeconds <= currentAudioTime + 0.05
-        ) {
-          counted += 1;
-          return { ...event, counted: true as const };
-        }
-        return event;
-      }),
+    switchProgressEvents.update((existing) =>
+      [
+        ...existing,
+        ...events.map((event, index) => ({
+          id: `${event.id}-${Date.now()}-${index}`,
+          timestampMs: Date.now(),
+          timeSeconds: event.timeSeconds,
+          band: event.band,
+          value: event.value,
+          threshold: event.threshold,
+          counted: true,
+          source: "counted" as const,
+        })),
+      ].slice(-256),
     );
-
-    if (counted > 0) onsetCountForClip += counted;
-    return counted;
   };
 
-  const registerOnsetIfNeeded = () => {
-    const essentiaCount = countEssentiaOnsets();
-    if (essentiaCount > 0) return true;
-
-    const gateOpen = $audioBands.envelopeA > $reactiveEnvelope.threshold;
-    if (gateOpen && !onsetGateWasOpen) {
-      onsetCountForClip += 1;
-      audioOnsets.update((events) =>
-        [
-          ...events,
-          {
-            id: `cnt-${Date.now()}-${events.length}`,
-            timestampMs: Date.now(),
-            timeSeconds: player?.currentTime ?? currentTime ?? 0,
-            band: timeShaperBand,
-            value: $audioBands.envelopeA,
-            threshold: $reactiveEnvelope.threshold,
-            counted: true,
-            source: "counted" as const,
-          },
-        ].slice(-256),
-      );
-    }
-    onsetGateWasOpen = gateOpen;
-    return gateOpen;
+  const syncOnsetRuntimeState = () => {
+    onsetTransportState.set({
+      progressCount: onsetSchedulerState.progressCount,
+      target: onsetSwitchTarget,
+      armed: onsetSchedulerState.armedAtSlotIndex !== null,
+      blockedReason: onsetSchedulerState.blockedReason,
+      progressMode: onsetSchedulerState.progressMode,
+      lastTransportSlot: onsetSchedulerState.lastTransportSlot,
+    });
   };
 
   const maybeQuantizedSwitch = () => {
@@ -415,25 +423,55 @@
       playableClips().length < 2
     )
       return;
-    const countedOnset = envelopeGateEnabled ? registerOnsetIfNeeded() : true;
-    const slotIndex = getTransportSlotIndex();
-    if (slotIndex > lastQuantizeSlot) {
-      if (!envelopeGateEnabled && lastQuantizeSlot >= 0) onsetCountForClip += 1;
-      if (lastQuantizeSlot >= 0 && onsetCountForClip >= onsetSwitchTarget) {
-        const skipChance = clampValue(switchSkipChancePercent, 0, 100) / 100;
-        if (skipChance > 0 && Math.random() < skipChance) {
-          status = `Quantized ${quantizeMode} switch bypassed (${Math.round(skipChance * 100)}%) · onset ${onsetCountForClip}/${onsetSwitchTarget}`;
-          onsetCountForClip = 0;
-        } else {
-          queueQuantizedSwitch(slotIndex);
-        }
-      } else if (lastQuantizeSlot >= 0) {
-        status = countedOnset
-          ? `Holding ${currentClip?.name ?? "clip"}: onset ${onsetCountForClip}/${onsetSwitchTarget}`
-          : `Holding ${currentClip?.name ?? "clip"}: waiting for onset ${onsetCountForClip}/${onsetSwitchTarget}`;
+    const nextCandidate = getNextSwitchCandidate();
+    const result = advanceOnsetSwitchScheduler(onsetSchedulerState, {
+      transportTimeSeconds:
+        $audioRuntime.source === "file" ? $audioRuntime.currentTime : 0,
+      bpm: $tempoState.bpm || 120,
+      firstBeatSeconds: $transportAlignment.firstBeatSeconds,
+      quantizeMode,
+      target: onsetSwitchTarget,
+      envelopeGateEnabled,
+      autoSwitchEnabled,
+      playableClipCount: playableClips().length,
+      nextClipReady: nextCandidate?.ready ?? true,
+      nextClipLabel: nextCandidate?.nextClip.name ?? null,
+      analyzedOnsets: $audioOnsets,
+      detectedOnsets: $liveDetectedOnsets,
+    });
+
+    onsetSchedulerState = result.state;
+    onsetCountForClip = onsetSchedulerState.progressCount;
+    appendProgressEvents(result.countedEvents);
+
+    if (result.shouldSwitch) {
+      const skipChance = clampValue(switchSkipChancePercent, 0, 100) / 100;
+      if (skipChance > 0 && Math.random() < skipChance) {
+        status = `Quantized ${quantizeMode} switch bypassed (${Math.round(skipChance * 100)}%) · onset ${onsetCountForClip}/${onsetSwitchTarget}`;
+        onsetSchedulerState = carryOnsetSwitchSchedulerState(
+          onsetSchedulerState,
+          onsetSwitchTarget,
+          result.currentSlotIndex,
+        );
+        onsetCountForClip = 0;
+      } else if (queueQuantizedSwitch(result.currentSlotIndex)) {
+        onsetSchedulerState = carryOnsetSwitchSchedulerState(
+          onsetSchedulerState,
+          onsetSwitchTarget,
+          result.currentSlotIndex,
+        );
       }
-      lastQuantizeSlot = slotIndex;
+    } else if (onsetSchedulerState.blockedReason) {
+      status = `Holding ${currentClip?.name ?? "clip"}: ${onsetSchedulerState.blockedReason}`;
+    } else if (onsetSchedulerState.armedAtSlotIndex !== null) {
+      status = `Armed ${quantizeMode} switch · onset ${onsetCountForClip}/${onsetSwitchTarget}`;
+    } else if (result.countedEvents.length > 0 || !envelopeGateEnabled) {
+      status = `Holding ${currentClip?.name ?? "clip"}: onset ${onsetCountForClip}/${onsetSwitchTarget}`;
+    } else if ($audioOnsets.length === 0) {
+      status = "Holding switch: awaiting analyzed onsets (detected fallback armed)";
     }
+
+    syncOnsetRuntimeState();
   };
 
   const applySwitchSkipChance = () => {
@@ -444,7 +482,8 @@
 
   const resetOnsetCounter = () => {
     onsetCountForClip = 0;
-    onsetGateWasOpen = false;
+    onsetSchedulerState = createOnsetSwitchSchedulerState(onsetSwitchTarget);
+    syncOnsetRuntimeState();
   };
 
   const toggleEnvelopeGate = () => {
@@ -612,9 +651,13 @@
       return;
     }
     applySpeedRamp();
-    lastQuantizeSlot = getTransportSlotIndex();
     lastStutterPulseMs = Date.now();
     resetOnsetCounter();
+    onsetSchedulerState = {
+      ...onsetSchedulerState,
+      lastTransportSlot: getTransportSlotIndex(),
+    };
+    syncOnsetRuntimeState();
     startPlaybackLoop();
     await player.play();
     status = `Playing ${currentClip?.name ?? "clip"}`;
@@ -640,7 +683,6 @@
     lastStutterPulseMs = 0;
     timeShaperLastAppliedMs = 0;
     currentTime = 0;
-    lastQuantizeSlot = -1;
     resetOnsetCounter();
     status = "Stopped";
   };
@@ -878,7 +920,6 @@
             on:timeupdate={() => {
               currentTime = player?.currentTime ?? 0;
               applySpeedRamp();
-              maybeQuantizedSwitch();
             }}
           >
             <track
