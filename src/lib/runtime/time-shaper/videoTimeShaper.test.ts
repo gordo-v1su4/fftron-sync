@@ -185,4 +185,23 @@ describe('video TimeShaper model', () => {
     expect(densityBlocked.status).toBe('blockedByDensity');
     expect(densityBlocked.minGapMs).toBe(320);
   });
+
+  it('routes effectRange triggers through the selected-range envelope instead of legacy named bands', () => {
+    const triggered = evaluateAudioTrigger(
+      {
+        enabled: true,
+        band: 'effectRange',
+        threshold: 0.45,
+        sensitivity: 1,
+        detail: 0.5,
+        triggerShiftMs: 0,
+        lastTriggeredAtMs: null
+      },
+      bands,
+      1_000
+    );
+
+    expect(triggered.status).toBe('triggered');
+    expect(triggered.bandValue).toBe(bands.envelopeA);
+  });
 });

@@ -3,6 +3,7 @@ import type { AudioBandState, ReactiveBandTarget } from '$lib/types/engine';
 export type VideoTimeShapeStepMode = 'smoothStep' | 'instantStep';
 export type VideoTimeShapePlaybackMode = 'sourceOffset' | 'stutterRepeat' | 'reverse' | 'tapeStop';
 export type AudioTriggerStatus = 'triggered' | 'blockedByThreshold' | 'blockedByDensity' | 'disabled';
+export type AudioTriggerBand = ReactiveBandTarget | 'effectRange';
 
 export interface VideoTimeShapePoint {
   x: number;
@@ -47,7 +48,7 @@ export interface VideoTimeShapeResult {
 
 export interface AudioTriggerConfig {
   enabled: boolean;
-  band: ReactiveBandTarget;
+  band: AudioTriggerBand;
   threshold: number;
   sensitivity: number;
   detail: number;
@@ -203,7 +204,8 @@ export const applyVideoTimeShape = (input: VideoTimeShapeInput): VideoTimeShapeR
   };
 };
 
-const selectBandValue = (bands: AudioBandState, band: ReactiveBandTarget): number => bands[band];
+const selectBandValue = (bands: AudioBandState, band: AudioTriggerBand): number =>
+  band === 'effectRange' ? bands.envelopeA : bands[band];
 
 export const evaluateAudioTrigger = (
   config: AudioTriggerConfig,

@@ -51,7 +51,6 @@
   let selectedTimeShapePresetId = "stutter-1-8";
   let timeShaperMix = 0.82;
   let timeShaperDepth = 0.86;
-  let timeShaperBand: "low" | "mid" | "high" | "full" = "full";
   let timeShaperStatus = "TimeShaper armed";
   let timeShaperLastAppliedMs = 0;
   let timeShaperLastTriggeredAtMs: number | null = null;
@@ -178,6 +177,15 @@
   const makeId = (): string =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
+  const formatFrequencyLabel = (value: number): string => {
+    if (!Number.isFinite(value)) return "0Hz";
+    if (value >= 1000) {
+      const normalized = value / 1000;
+      return `${normalized >= 10 ? normalized.toFixed(0) : normalized.toFixed(1)}kHz`;
+    }
+    return `${Math.round(value)}Hz`;
+  };
+
   let currentClip: VideoDeckClipRecord | undefined = undefined;
   let currentClipIndex = -1;
   let currentTimeShapePreset: TimeShapePreset = timeShapePresets[0];
@@ -191,6 +199,7 @@
   });
   let timeShapePreviewPoints = "";
   let timeShapePreviewPhase = 0;
+  let timeShaperTriggerLabel = "20Hz–14kHz";
 
   $: selectedClipId = $videoDeckAuthority.selectedClipId;
   $: authorityStatus = $videoDeckAuthority.status;
@@ -228,6 +237,7 @@
     const phase = (getBeatPosition() % cycle) / cycle;
     return Math.max(0, Math.min(100, phase * 100));
   })();
+  $: timeShaperTriggerLabel = `${formatFrequencyLabel($reactiveEnvelope.rangeStartHz)}–${formatFrequencyLabel($reactiveEnvelope.rangeEndHz)}`;
   $: videoDeckAuthority.update((state) => ({
     ...state,
     clips,
@@ -389,7 +399,7 @@
     const audioTrigger = evaluateAudioTrigger(
       {
         enabled: true,
-        band: timeShaperBand,
+        band: "effectRange",
         threshold: $reactiveEnvelope.threshold,
         sensitivity: $reactiveEnvelope.sensitivity,
         detail: timeShaperDepth,
@@ -404,11 +414,11 @@
 
     const triggerActive =
       audioTrigger.status === "triggered" ||
-      $audioBands.envelopeB > $reactiveEnvelope.threshold ||
+      $audioBands.envelopeA > $reactiveEnvelope.threshold ||
       currentTimeShapePreset.id === "half-time";
 
     if (!triggerActive) {
-      timeShaperStatus = `TS armed · ${timeShaperBand.toUpperCase()} ${audioTrigger.score.toFixed(2)}`;
+      timeShaperStatus = `TS armed · FX ${timeShaperTriggerLabel} · ${audioTrigger.score.toFixed(2)}`;
       return;
     }
 
@@ -898,17 +908,13 @@
                 aria-label="TimeShaper mix amount"
                 title="Dry/wet amount for video time remapping. 0 keeps normal playback; 1 applies the full preset curve."
               />
-              <select
-                bind:value={timeShaperBand}
-                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
-                aria-label="TimeShaper audio band"
-                title="Audio band used to trigger TimeShaper movement. The bottom timeline curves still feed speed/stutter automation; this selects the live trigger band."
+              <div
+                class="rounded-sm border border-surface-700 bg-surface-950 px-1.5 py-0.5 text-[0.56rem] font-mono text-primary-200"
+                aria-label="TimeShaper trigger range"
+                title="TimeShaper now follows the Audio Reactive panel's draggable effect span instead of a separate low/mid/high/full selector."
               >
-                <option value="low">LOW</option>
-                <option value="mid">MID</option>
-                <option value="high">HIGH</option>
-                <option value="full">FULL</option>
-              </select>
+                FX {timeShaperTriggerLabel}
+              </div>
               <div
                 class="flex items-center gap-1"
                 data-testid="onset-progress-meter"
