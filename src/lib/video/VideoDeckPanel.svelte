@@ -28,6 +28,7 @@
     describeVideoDeckSwitchNotice,
     type VideoDeckPrewarmStatus,
   } from "$lib/video/hotDeckSwitchStatus";
+  import { enforceSilentVideoElement } from "$lib/video/mediaMute";
 
   export let duration = 0;
   export let currentTime = 0;
@@ -238,6 +239,8 @@
     return Math.max(0, Math.min(100, phase * 100));
   })();
   $: timeShaperTriggerLabel = `${formatFrequencyLabel($reactiveEnvelope.rangeStartHz)}–${formatFrequencyLabel($reactiveEnvelope.rangeEndHz)}`;
+  $: enforceSilentVideoElement(player);
+  $: enforceSilentVideoElement(prewarmPlayer);
   $: videoDeckAuthority.update((state) => ({
     ...state,
     clips,
