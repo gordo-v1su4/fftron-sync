@@ -10,6 +10,7 @@
     waveformOverview,
   } from "$lib/stores/runtime";
   import { buildWaveformViewportPath } from "$lib/audio/wav";
+  import { buildTimelineOnsetLanes, type TimelineOnsetMarker } from "$lib/timeline/onsetMarkers";
   import {
     SPEED_AUTOMATION_DOMAIN,
     STUTTER_AUTOMATION_DOMAIN,
@@ -121,7 +122,9 @@
     index: number;
     total: number;
   }> = [];
-  let visibleOnsetMarkers: Array<{ position: number; counted: boolean; value: number; source: string; label: string }> = [];
+  let authoritativeOnsetMarkers: TimelineOnsetMarker[] = [];
+  let liveDetectedOverlayMarkers: TimelineOnsetMarker[] = [];
+  let countedDebugOverlayMarkers: TimelineOnsetMarker[] = [];
   let sectionBands: Array<{
     section: string;
     label: string;
@@ -876,15 +879,11 @@
     })
     .filter((entry) => entry.position >= 0 && entry.position <= 100);
 
-  $: visibleOnsetMarkers = $audioOnsets
-    .map((event) => ({
-      position: toLocalPercent(event.timeSeconds / safeDuration, viewportStart, viewportWindow),
-      counted: event.counted,
-      value: event.value,
-      source: event.source,
-      label: `${event.counted ? "Counted" : event.source === "essentia" ? "Essentia" : "Detected"} ${event.band.toUpperCase()} onset · ${event.timeSeconds.toFixed(2)}s`
-    }))
-    .filter((entry) => entry.position >= 0 && entry.position <= 100);
+  $: ({
+    authoritative: authoritativeOnsetMarkers,
+    liveFallback: liveDetectedOverlayMarkers,
+    countedDebug: countedDebugOverlayMarkers
+  } = buildTimelineOnsetLanes($audioOnsets, safeDuration, viewportStart, viewportWindow));
 
   $: sectionBands = timelineSections
     .map((section) => {
@@ -1320,18 +1319,59 @@
             />
           </svg>
         </div>
-        {#each visibleOnsetMarkers as marker}
+        <div class="absolute right-2 top-2 z-20 flex flex-wrap items-center justify-end gap-1 text-[0.5rem] uppercase tracking-widest text-surface-300">
+          <span class="rounded-full border border-lime-300/70 bg-lime-500/10 px-2 py-0.5 text-lime-100">Analyzed main lane</span>
+          {#if liveDetectedOverlayMarkers.length > 0}
+            <span class="rounded-full border border-sky-300/60 bg-sky-500/10 px-2 py-0.5 text-sky-100">Live fallback overlay</span>
+          {/if}
+          {#if countedDebugOverlayMarkers.length > 0}
+            <span class="rounded-full border border-primary-300/70 bg-primary-500/10 px-2 py-0.5 text-primary-100">Count/debug overlay</span>
+          {/if}
+        </div>
+        {#if authoritativeOnsetMarkers.length === 0 && (liveDetectedOverlayMarkers.length > 0 || countedDebugOverlayMarkers.length > 0)}
           <div
-            class="absolute top-0 bottom-0 z-20 w-[1px] {marker.counted ? 'bg-primary-300' : marker.source === 'essentia' ? 'bg-lime-300/80' : 'bg-surface-300/70'}"
+            class="absolute right-2 top-8 z-20 rounded border border-amber-300/60 bg-surface-950/90 px-2 py-1 text-[0.5rem] uppercase tracking-widest text-amber-100"
+            title="Authoritative analyzed onsets are unavailable, so only fallback/debug overlays are visible."
+          >
+            Analyzed onsets unavailable
+          </div>
+        {/if}
+        {#if liveDetectedOverlayMarkers.length > 0}
+          <div class="absolute left-2 top-2 z-20 rounded border border-sky-300/60 bg-surface-950/90 px-2 py-0.5 text-[0.48rem] uppercase tracking-widest text-sky-100">
+            Live fallback
+          </div>
+          {#each liveDetectedOverlayMarkers as marker}
+            <div
+              class="absolute top-[6%] h-[20%] z-20 w-[1px] bg-sky-300/75"
+              style={`left:${marker.position}%`}
+              title={marker.label}
+            >
+              <span class="absolute -top-0.5 -ml-[3px] h-1.5 w-1.5 rounded-full border border-sky-100 bg-sky-300 shadow-[0_0_6px_rgba(125,211,252,0.65)]"></span>
+            </div>
+          {/each}
+        {/if}
+        {#if countedDebugOverlayMarkers.length > 0}
+          <div class="absolute left-2 bottom-2 z-20 rounded border border-primary-300/60 bg-surface-950/90 px-2 py-0.5 text-[0.48rem] uppercase tracking-widest text-primary-100">
+            Count/debug
+          </div>
+          {#each countedDebugOverlayMarkers as marker}
+            <div
+              class="absolute bottom-[6%] h-[20%] z-20 w-[1px] bg-primary-300/80"
+              style={`left:${marker.position}%`}
+              title={marker.label}
+            >
+              <span class="absolute bottom-0 -ml-[3px] h-1.5 w-1.5 rounded-full border border-primary-100 bg-primary-300 shadow-[0_0_7px_rgba(245,158,11,0.7)]"></span>
+            </div>
+          {/each}
+        {/if}
+        {#each authoritativeOnsetMarkers as marker}
+          <div
+            class="absolute top-0 bottom-0 z-20 w-[1px] bg-lime-300/80"
             style={`left:${marker.position}%`}
             title={marker.label}
           >
             <span
-              class="absolute -top-0.5 -ml-[4px] h-2 w-2 rounded-full border {marker.counted
-                ? 'border-primary-100 bg-primary-400 shadow-[0_0_8px_rgba(245,158,11,0.85)]'
-                : marker.source === 'essentia'
-                  ? 'border-lime-100 bg-lime-300 shadow-[0_0_6px_rgba(190,242,100,0.7)]'
-                  : 'border-surface-200 bg-surface-500'}"
+              class="absolute -top-0.5 -ml-[4px] h-2 w-2 rounded-full border border-lime-100 bg-lime-300 shadow-[0_0_6px_rgba(190,242,100,0.7)]"
             ></span>
           </div>
         {/each}
