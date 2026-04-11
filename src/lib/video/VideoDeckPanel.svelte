@@ -179,7 +179,14 @@
   let currentClip: VideoDeckClipRecord | undefined = undefined;
   let currentClipIndex = -1;
   let currentTimeShapePreset: TimeShapePreset = timeShapePresets[0];
-  let nextPrewarmClip: VideoDeckClipRecord | undefined = undefined;
+  let nextPrewarmClip: VideoClip | undefined = undefined;
+  let switchNotice = describeVideoDeckSwitchNotice({
+    autoSwitchEnabled,
+    playableClipCount: 0,
+    currentClipName: undefined,
+    nextClipName: undefined,
+    prewarmStatus,
+  });
   let timeShapePreviewPoints = "";
   let timeShapePreviewPhase = 0;
 
@@ -325,7 +332,51 @@
     clips = clips.filter((entry) => entry.id !== id);
     ensurePlayableSelection();
     if (selectedClipId === id)
-      uiStatus = "Selected clip removed. Switched to next active clip.";
+      status = "Selected clip removed. Switched to next active clip.";
+  };
+
+  const getSlotDuration = (): number => {
+    const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
+    const beatDuration = 60 / bpm;
+    return quantizeMode === "bar" ? beatDuration * 4 : beatDuration;
+  };
+
+  const getTransportSlotIndex = (): number => {
+    const slotDuration = getSlotDuration();
+    if (!Number.isFinite(slotDuration) || slotDuration <= 0) return -1;
+    const elapsedSeconds = Math.max(
+      0,
+      (Date.now() - $tempoState.downbeatEpochMs) / 1000,
+    );
+    return Math.floor(elapsedSeconds / slotDuration);
+  };
+
+  const queueQuantizedSwitch = (slotIndex: number) => {
+    const playable = playableClips();
+    if (playable.length < 2 || !selectedClipId) return;
+    const currentIndex = playable.findIndex(
+      (clip) => clip.id === selectedClipId,
+    );
+    if (currentIndex < 0) {
+      selectedClipId = playable[0].id;
+      return;
+    }
+
+    const nextIndex = (currentIndex + 1) % playable.length;
+    const nextClip = playable[nextIndex];
+    if (prewarmClipId === nextClip.id && prewarmStatus !== "ready") {
+      status =
+        prewarmStatus === "failed"
+          ? `Cold fallback · ${nextClip.name} prewarm failed; holding ${currentClip?.name ?? "clip"} until a presentable frame exists`
+          : `Warming hold · ${nextClip.name} is not ready; holding ${currentClip?.name ?? "clip"} to avoid a frozen-looking switch`;
+      return;
+    }
+    pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
+    resumeAfterSwitch = Boolean(player && !player.paused);
+    selectedClipId = playable[nextIndex].id;
+    onsetCountForClip = 0;
+    onsetGateWasOpen = false;
+    status = `Quantized ${quantizeMode} switch after ${onsetSwitchTarget} onset(s): ${playable[nextIndex].name} (slot ${slotIndex})`;
   };
 
   const applyOnsetTarget = () => {
