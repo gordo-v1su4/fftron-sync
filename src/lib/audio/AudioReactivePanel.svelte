@@ -25,12 +25,15 @@
     extractWaveformOverview,
     isLikelyWavFile,
   } from "$lib/audio/wav";
+  import {
+    SPEED_AUTOMATION_DOMAIN,
+    clampValue,
+  } from "$lib/runtime/automationBounds";
   import type { EngineCueMarker } from "$lib/types/timeline";
   import type { ReactiveBandTarget } from "$lib/types/engine";
   import { getEssentiaClientApiKey } from "$lib/config/essentia-env";
 
   const targets: ReactiveBandTarget[] = ["low", "mid", "high", "full"];
-  const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
   const defaultEssentiaApiKey = getEssentiaClientApiKey();
   const waveformResolution = 4096;
 
@@ -64,8 +67,8 @@
   let speedMaxValue = 2.1;
   let stutterMinValue = 0;
   let stutterMaxValue = 1;
-  const speedDomainMin = 0.25;
-  const speedDomainMax = 4;
+  const speedDomainMin = SPEED_AUTOMATION_DOMAIN.min;
+  const speedDomainMax = SPEED_AUTOMATION_DOMAIN.max;
 
   let envelopeA = 0;
   let envelopeB = 0;
@@ -149,16 +152,10 @@
   };
 
   const applyAutomationBounds = () => {
-    const speedMin = Math.max(
-      speedDomainMin,
-      Math.min(speedMinValue, speedDomainMax - 0.01),
-    );
-    const speedMax = Math.min(
-      speedDomainMax,
-      Math.max(speedMaxValue, speedMin + 0.01),
-    );
-    const stutterMin = Math.max(0, Math.min(stutterMinValue, 0.999));
-    const stutterMax = Math.min(1, Math.max(stutterMaxValue, stutterMin + 0.001));
+    const speedMin = clampValue(speedMinValue, speedDomainMin, speedDomainMax - 0.01);
+    const speedMax = clampValue(speedMaxValue, speedMin + 0.01, speedDomainMax);
+    const stutterMin = clampValue(stutterMinValue, 0, 0.999);
+    const stutterMax = clampValue(stutterMaxValue, stutterMin + 0.001, 1);
 
     speedMinValue = Number(speedMin.toFixed(2));
     speedMaxValue = Number(speedMax.toFixed(2));
@@ -331,12 +328,16 @@
             : target === "high"
               ? high
               : full;
-      const scaledTarget = clamp01(
+      const scaledTarget = clampValue(
         ((targetedRaw - threshold) / Math.max(0.01, 1 - threshold)) *
           sensitivity,
+        0,
+        1,
       );
-      const scaledFull = clamp01(
+      const scaledFull = clampValue(
         ((full - threshold) / Math.max(0.01, 1 - threshold)) * sensitivity,
+        0,
+        1,
       );
 
       if (fftData.length > 0) {
@@ -561,7 +562,7 @@
       else activeSection.set("");
 
       const firstBeatSeconds = full.beats[0] ?? 0;
-      const normalizedConfidence = clamp01(full.confidence);
+      const normalizedConfidence = clampValue(full.confidence, 0, 1);
       tempoState.update((state) => ({
         ...state,
         bpm: full.bpm,

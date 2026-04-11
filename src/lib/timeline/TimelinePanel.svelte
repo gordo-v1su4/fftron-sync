@@ -10,6 +10,14 @@
     waveformOverview,
   } from "$lib/stores/runtime";
   import { buildWaveformViewportPath } from "$lib/audio/wav";
+  import {
+    SPEED_AUTOMATION_DOMAIN,
+    STUTTER_AUTOMATION_DOMAIN,
+    clampValue,
+    mapNormalizedToRange,
+    mapRangeToNormalized,
+    normalizeAutomationBounds,
+  } from "$lib/runtime/automationBounds";
 
   export let duration = 0;
   export let currentTime = 0;
@@ -50,10 +58,11 @@
   const markerTagAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const zoomSteps = [1, 2, 4, 8, 16];
   const laneLabelWidthPx = 110;
-  const speedDomainMin = 0.25;
-  const speedDomainMax = 4;
-  const stutterDomainMin = 0;
-  const stutterDomainMax = 1;
+  const speedDomainMin = SPEED_AUTOMATION_DOMAIN.min;
+  const speedDomainMax = SPEED_AUTOMATION_DOMAIN.max;
+  const stutterDomainMin = STUTTER_AUTOMATION_DOMAIN.min;
+  const stutterDomainMax = STUTTER_AUTOMATION_DOMAIN.max;
+  const clamp = clampValue;
 
   let zoomLevel = 1;
   let followPlayhead = true;
@@ -140,28 +149,16 @@
   let stutterMaxBound = 1;
   let currentSpeedRate = 1;
   let currentStutterAmount = 0;
+  let normalizedAutomationBounds = {
+    speedMin: 0.5,
+    speedMax: 2.1,
+    stutterMin: 0,
+    stutterMax: 1,
+  };
 
   let stutterEditorEl: HTMLDivElement | null = null;
   let speedEditorEl: HTMLDivElement | null = null;
   let activeDrag: DragState | null = null;
-
-  const clamp = (value: number, min: number, max: number): number =>
-    Math.max(min, Math.min(max, value));
-
-  const mapNormalizedToRange = (
-    normalized: number,
-    min: number,
-    max: number,
-  ): number => min + clamp(normalized, 0, 1) * (max - min);
-
-  const mapRangeToNormalized = (
-    value: number,
-    min: number,
-    max: number,
-  ): number => {
-    const span = Math.max(0.0001, max - min);
-    return clamp((value - min) / span, 0, 1);
-  };
 
   const formatClock = (seconds: number): string => {
     if (!Number.isFinite(seconds) || seconds < 0) return "00:00";
@@ -905,8 +902,8 @@
         section: section.section,
         label: section.label,
         energy: section.energy,
-        left: clamp(startPercent, 0, 100),
-        width: clamp(endPercent - startPercent, 0, 100),
+        left: clampValue(startPercent, 0, 100),
+        width: clampValue(endPercent - startPercent, 0, 100),
       };
     })
     .filter((band) => band.width > 0.2);
@@ -923,26 +920,11 @@
     1600,
   );
 
-  $: speedMinBound = clamp(
-    Math.min($automationBounds.speedMin, $automationBounds.speedMax - 0.01),
-    speedDomainMin,
-    speedDomainMax - 0.01,
-  );
-  $: speedMaxBound = clamp(
-    Math.max($automationBounds.speedMax, speedMinBound + 0.01),
-    speedMinBound + 0.01,
-    speedDomainMax,
-  );
-  $: stutterMinBound = clamp(
-    Math.min($automationBounds.stutterMin, $automationBounds.stutterMax - 0.001),
-    stutterDomainMin,
-    stutterDomainMax - 0.001,
-  );
-  $: stutterMaxBound = clamp(
-    Math.max($automationBounds.stutterMax, stutterMinBound + 0.001),
-    stutterMinBound + 0.001,
-    stutterDomainMax,
-  );
+  $: normalizedAutomationBounds = normalizeAutomationBounds($automationBounds);
+  $: speedMinBound = normalizedAutomationBounds.speedMin;
+  $: speedMaxBound = normalizedAutomationBounds.speedMax;
+  $: stutterMinBound = normalizedAutomationBounds.stutterMin;
+  $: stutterMaxBound = normalizedAutomationBounds.stutterMax;
   $: displayStutterPointsData = stutterPoints.map((point) => ({
     x: point.x,
     y: mapRangeToNormalized(
@@ -1005,7 +987,7 @@
     }
   }
 
-  $: normalizedPlayhead = clamp(currentTime / safeDuration, 0, 1);
+  $: normalizedPlayhead = clampValue(currentTime / safeDuration, 0, 1);
   $: currentSpeedValue = evaluateCurveY(
     speedPoints,
     speedInterpolation,

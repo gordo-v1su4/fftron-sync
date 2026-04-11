@@ -17,6 +17,12 @@
     reactiveEnvelope,
     tempoState,
   } from "$lib/stores/runtime";
+  import {
+    SPEED_AUTOMATION_DOMAIN,
+    clampValue,
+    mapNormalizedToRange,
+    normalizeAutomationBounds,
+  } from "$lib/runtime/automationBounds";
 
   export let duration = 0;
   export let currentTime = 0;
@@ -71,8 +77,8 @@
   let uploadLane = 0;
   let laneMuted = [false, false, false];
   let soloLane: number | null = null;
-  const speedDomainMin = 0.25;
-  const speedDomainMax = 4;
+  const speedDomainMin = SPEED_AUTOMATION_DOMAIN.min;
+  const speedDomainMax = SPEED_AUTOMATION_DOMAIN.max;
 
   interface TimeShapePreset {
     id: string;
@@ -166,13 +172,6 @@
       ],
     },
   ];
-  const mapNormalizedToRange = (
-    normalized: number,
-    min: number,
-    max: number,
-  ): number => min + Math.max(0, Math.min(1, normalized)) * (max - min);
-  const clamp = (value: number, min: number, max: number): number =>
-    Math.max(min, Math.min(max, value));
   const wrapMediaTime = (value: number, mediaDuration: number): number => {
     if (!Number.isFinite(value)) return 0;
     if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) return Math.max(0, value);
@@ -350,7 +349,9 @@
   };
 
   const getOnsetProgress = (): number =>
-    onsetSwitchTarget > 0 ? clamp(onsetCountForClip / onsetSwitchTarget, 0, 1) : 0;
+    onsetSwitchTarget > 0
+      ? clampValue(onsetCountForClip / onsetSwitchTarget, 0, 1)
+      : 0;
 
   const getOnsetDotCount = (): number => Math.max(1, Math.min(maxOnsetDots, onsetSwitchTarget));
 
@@ -419,7 +420,7 @@
     if (slotIndex > lastQuantizeSlot) {
       if (!envelopeGateEnabled && lastQuantizeSlot >= 0) onsetCountForClip += 1;
       if (lastQuantizeSlot >= 0 && onsetCountForClip >= onsetSwitchTarget) {
-        const skipChance = clamp(switchSkipChancePercent, 0, 100) / 100;
+        const skipChance = clampValue(switchSkipChancePercent, 0, 100) / 100;
         if (skipChance > 0 && Math.random() < skipChance) {
           status = `Quantized ${quantizeMode} switch bypassed (${Math.round(skipChance * 100)}%) · onset ${onsetCountForClip}/${onsetSwitchTarget}`;
           onsetCountForClip = 0;
@@ -437,7 +438,7 @@
 
   const applySwitchSkipChance = () => {
     switchSkipChancePercent = Number(
-      clamp(Number(switchSkipChancePercent) || 0, 0, 100).toFixed(0),
+      clampValue(Number(switchSkipChancePercent) || 0, 0, 100).toFixed(0),
     );
   };
 
@@ -537,22 +538,11 @@
       0,
       Math.min(1, $automationRuntime.stutter),
     );
-    const speedMinBound = Math.max(
-      speedDomainMin,
-      Math.min($automationBounds.speedMin, $automationBounds.speedMax - 0.01),
-    );
-    const speedMaxBound = Math.min(
-      speedDomainMax,
-      Math.max($automationBounds.speedMax, speedMinBound + 0.01),
-    );
-    const stutterMinBound = Math.max(
-      0,
-      Math.min($automationBounds.stutterMin, $automationBounds.stutterMax - 0.001),
-    );
-    const stutterMaxBound = Math.min(
-      1,
-      Math.max($automationBounds.stutterMax, stutterMinBound + 0.001),
-    );
+    const normalizedAutomationBounds = normalizeAutomationBounds($automationBounds);
+    const speedMinBound = normalizedAutomationBounds.speedMin;
+    const speedMaxBound = normalizedAutomationBounds.speedMax;
+    const stutterMinBound = normalizedAutomationBounds.stutterMin;
+    const stutterMaxBound = normalizedAutomationBounds.stutterMax;
     const rampDepth = quantizeMode === "bar" ? 0.45 : 0.28;
     const automationRate = mapNormalizedToRange(
       automationSpeedNorm,
