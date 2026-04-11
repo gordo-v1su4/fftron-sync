@@ -8,6 +8,10 @@
     type VideoTimeShapeStepMode,
   } from "$lib/runtime/time-shaper";
   import {
+    describeVideoDeckSwitchNotice,
+    type VideoDeckPrewarmStatus,
+  } from "$lib/video/hotDeckSwitchStatus";
+  import {
     activeSection,
     audioOnsets,
     audioRuntime,
@@ -72,7 +76,7 @@
   let pendingSeekRatio: number | null = null;
   let resumeAfterSwitch = false;
   let prewarmClipId = "";
-  let prewarmReady = false;
+  let prewarmStatus: VideoDeckPrewarmStatus = "idle";
   const matrixColumns = 14;
   let uploadLane = 0;
   let laneMuted = [false, false, false];
@@ -186,6 +190,13 @@
   let currentClipIndex = -1;
   let currentTimeShapePreset: TimeShapePreset = timeShapePresets[0];
   let nextPrewarmClip: VideoClip | undefined = undefined;
+  let switchNotice = describeVideoDeckSwitchNotice({
+    autoSwitchEnabled,
+    playableClipCount: 0,
+    currentClipName: undefined,
+    nextClipName: undefined,
+    prewarmStatus,
+  });
   let timeShapePreviewPoints = "";
   let timeShapePreviewPhase = 0;
 
@@ -201,11 +212,18 @@
   })();
   $: if (nextPrewarmClip?.id !== prewarmClipId) {
     prewarmClipId = nextPrewarmClip?.id ?? "";
-    prewarmReady = false;
+    prewarmStatus = nextPrewarmClip ? "warming" : "idle";
     if (prewarmPlayer && nextPrewarmClip) {
       prewarmPlayer.load();
     }
   }
+  $: switchNotice = describeVideoDeckSwitchNotice({
+    autoSwitchEnabled,
+    playableClipCount: playableClips().length,
+    currentClipName: currentClip?.name,
+    nextClipName: nextPrewarmClip?.name,
+    prewarmStatus,
+  });
   $: timeShapePreviewPoints = currentTimeShapePreset.points
     .map((point) => `${Math.max(0, Math.min(1, point.x)) * 100},${50 - Math.max(-1, Math.min(1, point.y)) * 38}`)
     .join(" "), currentTimeShapePreset.id;
@@ -331,8 +349,11 @@
 
     const nextIndex = (currentIndex + 1) % playable.length;
     const nextClip = playable[nextIndex];
-    if (prewarmClipId === nextClip.id && !prewarmReady) {
-      status = `Warming ${nextClip.name}; holding ${currentClip?.name ?? "clip"} to avoid frozen switch`;
+    if (prewarmClipId === nextClip.id && prewarmStatus !== "ready") {
+      status =
+        prewarmStatus === "failed"
+          ? `Cold fallback · ${nextClip.name} prewarm failed; holding ${currentClip?.name ?? "clip"} until a presentable frame exists`
+          : `Warming hold · ${nextClip.name} is not ready; holding ${currentClip?.name ?? "clip"} to avoid a frozen-looking switch`;
       return;
     }
     pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
@@ -832,6 +853,24 @@
         class="w-full max-h-full aspect-video bg-black rounded-sm border border-surface-900 relative flex overflow-hidden shadow-xl shadow-black/50 mx-auto"
       >
         <div class="absolute top-1 right-1 z-10 flex gap-1 pointer-events-none">
+          {#if switchNotice.state !== "idle"}
+            <div
+              class="max-w-56 px-2 py-1 rounded-sm border backdrop-blur-sm bg-surface-950/85 {switchNotice.state === 'hotReady'
+                ? 'border-emerald-500/70 text-emerald-200'
+                : switchNotice.state === 'warmingHold'
+                  ? 'border-amber-500/70 text-amber-100'
+                  : 'border-rose-500/70 text-rose-100'}"
+              data-testid="video-switch-notice"
+              title="Explicit hot-deck switch state so held frames never look like a silent freeze."
+            >
+              <div class="text-[0.5rem] uppercase tracking-[0.18em] font-bold">
+                {switchNotice.headline}
+              </div>
+              <div class="text-[0.56rem] normal-case leading-tight tracking-normal">
+                {switchNotice.detail}
+              </div>
+            </div>
+          {/if}
           <span
             class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-surface-800 rounded-sm font-mono backdrop-blur-sm"
             >C: {Math.max(1, currentClipIndex + 1)}</span
@@ -1097,8 +1136,18 @@
             preload="auto"
             class="hidden"
             aria-hidden="true"
-            on:canplay={() => { prewarmReady = true; }}
-            on:error={() => { prewarmReady = false; }}
+            on:loadstart={() => {
+              prewarmStatus = "warming";
+            }}
+            on:waiting={() => {
+              prewarmStatus = "warming";
+            }}
+            on:canplay={() => {
+              prewarmStatus = "ready";
+            }}
+            on:error={() => {
+              prewarmStatus = "failed";
+            }}
           ></video>
         {/if}
       </div>
