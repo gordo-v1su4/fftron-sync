@@ -72,6 +72,8 @@
   let prewarmClipId = "";
   let prewarmStatus: VideoDeckPrewarmStatus = "idle";
   const matrixColumns = 14;
+  const totalMatrixSlots = matrixColumns * 3;
+  let matrixCollapsed = true;
   let uploadLane = 0;
   let laneMuted = [false, false, false];
   let soloLane: number | null = null;
@@ -185,6 +187,89 @@
         { x: 0, y: 0 },
         { x: 0.5, y: -0.4 },
         { x: 1, y: -0.8 },
+      ],
+    },
+    {
+      id: "triplet-skip-back",
+      label: "Triplet Skip-Back",
+      shortLabel: "TRIPLET",
+      playbackMode: "stutterRepeat",
+      mode: "instantStep",
+      cycleBeats: 1,
+      yRangeBeats: 0.45,
+      repeatWindowBeats: 1 / 3,
+      points: [
+        { x: 0, y: 0 },
+        { x: 0.16, y: -0.18 },
+        { x: 0.33, y: -0.62 },
+        { x: 0.5, y: -0.14 },
+        { x: 0.66, y: -0.58 },
+        { x: 0.83, y: -0.2 },
+        { x: 1, y: 0 },
+      ],
+    },
+    {
+      id: "ease-ramp-out",
+      label: "Easy Ease Ramp-Out",
+      shortLabel: "EASE OUT",
+      playbackMode: "sourceOffset",
+      mode: "smoothStep",
+      cycleBeats: 4,
+      yRangeBeats: 0.85,
+      points: [
+        { x: 0, y: 0 },
+        { x: 0.2, y: -0.08 },
+        { x: 0.48, y: -0.32 },
+        { x: 0.78, y: -0.72 },
+        { x: 1, y: -1 },
+      ],
+    },
+    {
+      id: "medium-ramp-up",
+      label: "Medium Ramp-Up",
+      shortLabel: "MID UP",
+      playbackMode: "sourceOffset",
+      mode: "smoothStep",
+      cycleBeats: 4,
+      yRangeBeats: 0.9,
+      points: [
+        { x: 0, y: 0 },
+        { x: 0.22, y: 0.1 },
+        { x: 0.5, y: 0.34 },
+        { x: 0.78, y: 0.68 },
+        { x: 1, y: 1 },
+      ],
+    },
+    {
+      id: "fast-in-slow-out",
+      label: "Fast In Slow Out",
+      shortLabel: "FI SO",
+      playbackMode: "sourceOffset",
+      mode: "smoothStep",
+      cycleBeats: 2,
+      yRangeBeats: 0.75,
+      points: [
+        { x: 0, y: 0 },
+        { x: 0.12, y: -0.58 },
+        { x: 0.38, y: -0.84 },
+        { x: 0.72, y: -0.95 },
+        { x: 1, y: -1 },
+      ],
+    },
+    {
+      id: "slow-in-fast-out",
+      label: "Slow In Fast Out",
+      shortLabel: "SI FO",
+      playbackMode: "sourceOffset",
+      mode: "smoothStep",
+      cycleBeats: 2,
+      yRangeBeats: 0.75,
+      points: [
+        { x: 0, y: 0 },
+        { x: 0.28, y: -0.06 },
+        { x: 0.62, y: -0.28 },
+        { x: 0.88, y: -0.72 },
+        { x: 1, y: -1 },
       ],
     },
   ];
@@ -353,6 +438,8 @@
     nextClipName: undefined,
     prewarmStatus,
   });
+  let playableClipCount = 0;
+  let matrixSummary = "No clips loaded";
   let timeShapePreviewPoints = "";
   let timeShapePreviewPhase = 0;
   let timeShaperTriggerLabel = "20Hz–14kHz";
@@ -385,6 +472,10 @@
     nextClipName: nextPrewarmClip?.name,
     prewarmStatus,
   });
+  $: playableClipCount = playableClips().length;
+  $: matrixSummary = clips.length
+    ? `${clips.length}/${totalMatrixSlots} loaded · ${playableClipCount} live${currentClip ? ` · Now ${currentClip.name.replace(/\.[^/.]+$/, "")}` : ""}`
+    : "No clips loaded";
   $: timeShapePreviewPoints = currentTimeShapePreset.points
     .map((point) => `${Math.max(0, Math.min(1, point.x)) * 100},${50 - Math.max(-1, Math.min(1, point.y)) * 38}`)
     .join(" "), currentTimeShapePreset.id;
@@ -781,90 +872,125 @@
   class="h-full flex flex-col gap-1 bg-surface-900 border border-surface-800 rounded-md p-1"
 >
   <div
-    class="flex-none flex items-center justify-between border-b border-surface-800 pb-1 mb-1"
+    class="flex-none flex items-center justify-between gap-2 border-b border-surface-800 pb-1 mb-1"
   >
-    <h2
-      class="text-[0.65rem] font-bold uppercase tracking-widest text-surface-400 m-0"
-    >
-      Video Matrix
-    </h2>
-    <p class="text-[0.6rem] m-0 truncate text-primary-500" aria-live="polite">
+    <div class="min-w-0 flex items-center gap-2">
+      <h2
+        class="text-[0.65rem] font-bold uppercase tracking-widest text-surface-400 m-0"
+      >
+        Video Matrix
+      </h2>
+      <button
+        type="button"
+        class="rounded-sm border border-surface-700 bg-surface-950 px-2 py-0.5 text-[0.52rem] font-bold uppercase tracking-[0.18em] text-surface-300 hover:bg-surface-800"
+        aria-controls="video-matrix-grid"
+        aria-expanded={!matrixCollapsed}
+        on:click={() => {
+          matrixCollapsed = !matrixCollapsed;
+        }}
+      >
+        {matrixCollapsed ? "Show Grid" : "Hide Grid"}
+      </button>
+    </div>
+    <p class="min-w-0 max-w-60 text-[0.6rem] m-0 truncate text-primary-500" aria-live="polite">
       {authorityStatus || uiStatus}
     </p>
   </div>
 
-  <div
-    class="flex-none flex flex-col gap-[1px] bg-surface-800 border border-surface-800 rounded-sm overflow-hidden text-[0.6rem]"
-  >
-    {#each [2, 1, 0] as layer}
-      <div class="flex items-stretch bg-surface-950">
-        <div
-          class="w-16 flex flex-col items-center justify-center gap-1 bg-surface-900 p-1 border-r border-surface-800"
-        >
-          <span class="text-[0.55rem] text-surface-400 font-bold uppercase"
-            >L{layer + 1}</span
+  {#if matrixCollapsed}
+    <div
+      class="flex-none flex items-center justify-between gap-2 rounded-sm border border-surface-800 bg-surface-950 px-2 py-1 text-[0.58rem] font-mono text-surface-400"
+    >
+      <div class="min-w-0 flex items-center gap-1.5 overflow-hidden">
+        <span class="rounded-sm border border-surface-800 bg-surface-900 px-1.5 py-0.5 text-surface-200">
+          {clips.length}/{totalMatrixSlots} loaded
+        </span>
+        <span class="rounded-sm border border-surface-800 bg-surface-900 px-1.5 py-0.5 text-surface-300">
+          {playableClipCount} live
+        </span>
+        <span class="truncate rounded-sm border border-surface-800 bg-surface-900 px-1.5 py-0.5 text-surface-300">
+          {matrixSummary}
+        </span>
+      </div>
+      <span class="hidden xl:inline text-[0.5rem] uppercase tracking-[0.18em] text-surface-500">
+        Matrix Collapsed
+      </span>
+    </div>
+  {:else}
+    <div
+      id="video-matrix-grid"
+      class="flex-none flex flex-col gap-[1px] bg-surface-800 border border-surface-800 rounded-sm overflow-hidden text-[0.6rem]"
+    >
+      {#each [2, 1, 0] as layer}
+        <div class="flex items-stretch bg-surface-950">
+          <div
+            class="w-16 flex flex-col items-center justify-center gap-1 bg-surface-900 p-1 border-r border-surface-800"
           >
-          <div class="flex gap-1 w-10">
-            <button
-              class="w-5 h-5 rounded-sm flex items-center justify-center font-bold text-[0.55rem] bg-surface-800 {laneMuted[
+            <span class="text-[0.55rem] text-surface-400 font-bold uppercase"
+              >L{layer + 1}</span
+            >
+            <div class="flex gap-1 w-10">
+              <button
+                class="w-5 h-5 rounded-sm flex items-center justify-center font-bold text-[0.55rem] bg-surface-800 {laneMuted[
+                  layer
+                ]
+                  ? 'text-error-500 border border-error-500'
+                  : 'text-surface-400 border border-surface-700'}"
+                aria-label={`Mute layer ${layer + 1}`}
+                on:click={() => toggleMuteLane(layer)}>M</button
+              >
+              <button
+                class="w-5 h-5 rounded-sm flex items-center justify-center font-bold text-[0.55rem] bg-surface-800 {soloLane ===
                 layer
-              ]
-                ? 'text-error-500 border border-error-500'
-                : 'text-surface-400 border border-surface-700'}"
-              aria-label={`Mute layer ${layer + 1}`}
-              on:click={() => toggleMuteLane(layer)}>M</button
-            >
-            <button
-              class="w-5 h-5 rounded-sm flex items-center justify-center font-bold text-[0.55rem] bg-surface-800 {soloLane ===
-              layer
-                ? 'text-primary-500 border border-primary-500'
-                : 'text-surface-400 border border-surface-700'}"
-              aria-label={`Solo layer ${layer + 1}`}
-              on:click={() => toggleSoloLane(layer)}>S</button
-            >
+                  ? 'text-primary-500 border border-primary-500'
+                  : 'text-surface-400 border border-surface-700'}"
+                aria-label={`Solo layer ${layer + 1}`}
+                on:click={() => toggleSoloLane(layer)}>S</button
+              >
+            </div>
+          </div>
+          <div class="flex-1 grid grid-cols-14 gap-[1px] bg-surface-800 p-[1px]">
+            {#each Array.from({ length: matrixColumns }) as _, col}
+              {@const clip = clipAtMatrix(layer, col)}
+              <button
+                class="relative h-14 flex flex-col overflow-hidden bg-surface-950 text-surface-500 hover:bg-surface-800 border transition-colors {clip &&
+                clip.id === selectedClipId
+                  ? 'border-primary-500 shadow-[inset_0_0_12px_rgba(245,158,11,0.25)]'
+                  : 'border-transparent'}"
+                aria-label={clip
+                  ? `Select ${clip.name} on layer ${layer + 1}, slot ${col + 1}`
+                  : `Empty slot ${col + 1} on layer ${layer + 1}`}
+                title={clip
+                  ? `Matrix slot: ${clip.name}. Click to cue this clip. Auto-cycling repeats it until ${onsetSwitchTarget} onset(s) are counted, then switches on the next ${quantizeMode} boundary.`
+                  : `Empty matrix slot. Add videos from the sample folder or your own files.`}
+                on:click={() => clip && selectClip(clip.id)}
+              >
+                {#if clip}
+                  <video
+                    src={clip.url}
+                    class="absolute inset-0 w-full h-full object-cover opacity-60 mix-blend-screen"
+                    muted
+                    disablePictureInPicture
+                    preload="metadata"
+                  ></video>
+                  <div
+                    class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-surface-950 to-transparent p-0.5 z-10 text-left"
+                  >
+                    <span
+                      class="text-[0.55rem] tracking-tighter font-mono uppercase text-surface-200 block truncate drop-shadow-md"
+                      >{clip.name.replace(/\.[^/.]+$/, "")}</span
+                    >
+                  </div>
+                {:else}
+                  <span class="m-auto text-[0.5rem] text-surface-700">·</span>
+                {/if}
+              </button>
+            {/each}
           </div>
         </div>
-        <div class="flex-1 grid grid-cols-14 gap-[1px] bg-surface-800 p-[1px]">
-          {#each Array.from({ length: matrixColumns }) as _, col}
-            {@const clip = clipAtMatrix(layer, col)}
-            <button
-              class="relative h-14 flex flex-col overflow-hidden bg-surface-950 text-surface-500 hover:bg-surface-800 border transition-colors {clip &&
-              clip.id === selectedClipId
-                ? 'border-primary-500 shadow-[inset_0_0_12px_rgba(245,158,11,0.25)]'
-                : 'border-transparent'}"
-              aria-label={clip
-                ? `Select ${clip.name} on layer ${layer + 1}, slot ${col + 1}`
-                : `Empty slot ${col + 1} on layer ${layer + 1}`}
-              title={clip
-                ? `Matrix slot: ${clip.name}. Click to cue this clip. Auto-cycling repeats it until ${onsetSwitchTarget} onset(s) are counted, then switches on the next ${quantizeMode} boundary.`
-                : `Empty matrix slot. Add videos from the sample folder or your own files.`}
-              on:click={() => clip && selectClip(clip.id)}
-            >
-              {#if clip}
-                <video
-                  src={clip.url}
-                  class="absolute inset-0 w-full h-full object-cover opacity-60 mix-blend-screen"
-                  muted
-                  disablePictureInPicture
-                  preload="metadata"
-                ></video>
-                <div
-                  class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-surface-950 to-transparent p-0.5 z-10 text-left"
-                >
-                  <span
-                    class="text-[0.55rem] tracking-tighter font-mono uppercase text-surface-200 block truncate drop-shadow-md"
-                    >{clip.name.replace(/\.[^/.]+$/, "")}</span
-                  >
-                </div>
-              {:else}
-                <span class="m-auto text-[0.5rem] text-surface-700">·</span>
-              {/if}
-            </button>
-          {/each}
-        </div>
-      </div>
-    {/each}
-  </div>
+      {/each}
+    </div>
+  {/if}
 
   <div class="flex flex-row gap-1 flex-1 min-h-0">
     <div
@@ -938,37 +1064,34 @@
       <div
         class="w-full max-h-full aspect-video bg-black rounded-sm border border-surface-900 relative flex items-center justify-center overflow-hidden shadow-xl shadow-black/50 mx-auto"
       >
-        <div class="absolute top-1 right-1 z-10 flex gap-1 pointer-events-none">
+        <div class="absolute top-1 right-1 left-1 z-10 flex flex-wrap justify-end gap-1 pointer-events-none opacity-75">
           {#if switchNotice.state !== "idle"}
             <div
-              class="max-w-56 px-2 py-1 rounded-sm border backdrop-blur-sm bg-surface-950/85 {switchNotice.state === 'hotReady'
-                ? 'border-emerald-500/70 text-emerald-200'
+              class="px-1.5 py-0.5 rounded-sm border backdrop-blur-sm bg-surface-950/60 {switchNotice.state === 'hotReady'
+                ? 'border-emerald-500/55 text-emerald-200'
                 : switchNotice.state === 'warmingHold'
-                  ? 'border-amber-500/70 text-amber-100'
-                  : 'border-rose-500/70 text-rose-100'}"
+                  ? 'border-amber-500/55 text-amber-100'
+                  : 'border-rose-500/55 text-rose-100'}"
               data-testid="video-switch-notice"
-              title="Explicit hot-deck switch state so held frames never look like a silent freeze."
+              aria-label={`${switchNotice.headline}. ${switchNotice.detail}`}
             >
-              <div class="text-[0.5rem] uppercase tracking-[0.18em] font-bold">
+              <div class="text-[0.52rem] uppercase tracking-[0.18em] font-bold">
                 {switchNotice.headline}
-              </div>
-              <div class="text-[0.56rem] normal-case leading-tight tracking-normal">
-                {switchNotice.detail}
               </div>
             </div>
           {/if}
           <span
-            class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-surface-800 rounded-sm font-mono backdrop-blur-sm"
+            class="text-[0.55rem] px-1 py-0.5 bg-surface-950/60 border border-surface-700/80 rounded-sm font-mono backdrop-blur-sm"
             >C: {Math.max(1, currentClipIndex + 1)}</span
           >
           <span
-            class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-primary-500/70 text-primary-300 rounded-sm font-mono backdrop-blur-sm"
+            class="text-[0.55rem] px-1 py-0.5 bg-surface-950/60 border border-primary-500/55 text-primary-300 rounded-sm font-mono backdrop-blur-sm"
             data-testid="video-timeshaper-hud"
             title="Live TimeShaper status. Preset curves below remap the selected video clip's source time while it remains the one visible deck."
             >{timeShaperStatus}</span
           >
           <span
-            class="text-[0.6rem] px-1 py-0.5 bg-surface-950/80 border border-surface-800 rounded-sm font-mono backdrop-blur-sm"
+            class="text-[0.55rem] px-1 py-0.5 bg-surface-950/60 border border-surface-700/80 rounded-sm font-mono backdrop-blur-sm"
             >{$activeSection} · {currentPlaybackRate.toFixed(2)}x · S{
               currentAutomationRate.toFixed(2)
             }x · T{(currentAutomationStutter * 100).toFixed(0)}%</span
@@ -1102,9 +1225,9 @@
               <select
                 id="timeshaper-preset"
                 bind:value={selectedTimeShapePresetId}
-                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
+                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.5rem] font-mono text-surface-200"
                 aria-label="TimeShaper curve preset"
-                title="Choose the preset curve that remaps video timing: stutter, scratch, reverse, tape stop, or half-time drag."
+                title="Choose the preset curve that remaps video timing with stutters, scratches, tape-stop drags, or easing ramps."
               >
                 {#each timeShapePresets as preset}
                   <option value={preset.id}>{preset.label}</option>
