@@ -149,12 +149,7 @@ export const advanceOnsetSwitchScheduler = (
       );
       state.progressMode = 'analyzed';
     } else {
-      state.lastCountedDetectedIndex = pushFrom(
-        input.detectedOnsets,
-        state.lastCountedDetectedIndex,
-        'detected-fallback',
-      );
-      state.progressMode = 'detected-fallback';
+      state.progressMode = 'analyzed';
     }
   }
 

@@ -150,24 +150,26 @@ describe('advanceVideoDeckAuthority', () => {
     expect(held.state.status.toLowerCase()).toContain('holding');
   });
 
-  it('falls back to detected onsets when authoritative essentia onsets are unavailable', () => {
-    const armed = advanceVideoDeckAuthority(
+  it('does not count or switch from detected fallback events when analyzed onsets are unavailable', () => {
+    const waiting = advanceVideoDeckAuthority(
       baseState(),
       baseMeta(),
       baseInput(
         [],
         [
-        onset('det-1', 0.1, 'detected'),
-        onset('det-2', 0.3, 'detected'),
+          onset('det-1', 0.1, 'detected'),
+          onset('det-2', 0.3, 'detected'),
         ],
       ),
     );
 
-    expect(armed.meta.schedulerState.progressMode).toBe('detected-fallback');
+    expect(waiting.meta.schedulerState.progressMode).toBe('analyzed');
+    expect(waiting.state.onsetCountForClip).toBe(0);
+    expect(waiting.state.status).toContain('awaiting analyzed onsets');
 
-    const switched = advanceVideoDeckAuthority(
-      armed.state,
-      armed.meta,
+    const stillWaiting = advanceVideoDeckAuthority(
+      waiting.state,
+      waiting.meta,
       nextBoundaryInput({
         detectedOnsets: [
           onset('det-1', 0.1, 'detected'),
@@ -176,7 +178,8 @@ describe('advanceVideoDeckAuthority', () => {
       }),
     );
 
-    expect(switched.state.selectedClipId).toBe(clipB.id);
+    expect(stillWaiting.state.selectedClipId).toBe(clipA.id);
+    expect(stillWaiting.state.onsetCountForClip).toBe(0);
   });
 
   it('counts transport slots instead of onsets when gating is disabled', () => {

@@ -10,9 +10,7 @@
     queueSectionMarkers,
     resyncDownbeat,
     setBpm,
-    setDecodeBackend,
     setQuantization,
-    setRendererBackend,
     tapBpm,
   } from "$lib/tauri/commands";
   import {
@@ -23,7 +21,6 @@
     tempoState,
   } from "$lib/stores/runtime";
   import { describeRuntimeCapabilityTruth } from "$lib/engine/runtimeCapabilityStatus";
-  import type { DecodeBackend, RendererBackend } from "$lib/types/engine";
   import type { QuantizeGrid } from "$lib/types/timeline";
 
   const quantizeOptions: QuantizeGrid[] = [
@@ -80,36 +77,6 @@
       status = `Queued ${count} markers from ${$activeSection}`;
     } catch (error) {
       status = `Queue section markers failed: ${getErrorMessage(error)}`;
-    }
-  };
-
-  const switchDecode = async (event: Event) => {
-    try {
-      const backend = (event.currentTarget as HTMLSelectElement)
-        .value as DecodeBackend;
-      runtimeCapabilities.set(await setDecodeBackend(backend));
-      status =
-        backend === "webcodecs"
-          ? "Decode preference set to WebCodecs probe only; live deck playback still needs telemetry-backed integration."
-          : backend === "native_ffmpeg"
-            ? "Decode backend set to native_ffmpeg desktop path."
-            : "Decode backend active: HTMLVideo fallback.";
-    } catch (error) {
-      status = `Set decode backend failed: ${getErrorMessage(error)}`;
-    }
-  };
-
-  const switchRenderer = async (event: Event) => {
-    try {
-      const backend = (event.currentTarget as HTMLSelectElement)
-        .value as RendererBackend;
-      runtimeCapabilities.set(await setRendererBackend(backend));
-      status =
-        backend === "webgpu"
-          ? "Renderer preference set to WebGPU probe only; hot-deck rendering stays capability-gated until telemetry-backed integration lands."
-          : "Renderer active: WebGL2 fallback.";
-    } catch (error) {
-      status = `Set renderer backend failed: ${getErrorMessage(error)}`;
     }
   };
 
@@ -260,42 +227,24 @@
     <div
       class="flex flex-wrap gap-1 items-center bg-surface-950 p-1 border border-surface-800 rounded-sm"
     >
-      <label
-        for="transport-decode"
+      <span
         class="text-surface-500 uppercase font-bold text-[0.55rem] w-8"
-        >Rndr</label
+        >Rndr</span
       >
-      <select
-        id="transport-decode"
-        value={$runtimeCapabilities.selectedDecode}
-        on:change={switchDecode}
-        class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm w-20 outline-none"
+      <div
+        class="rounded-sm border border-surface-700 bg-surface-900 px-2 py-0.5 text-[0.6rem] font-mono text-surface-200"
       >
-        <option value="htmlvideo">htmlvideo</option>
-        <option value="webcodecs" disabled={!$runtimeCapabilities.webcodecs}
-          >webcodecs</option
-        >
-        <option
-          value="native_ffmpeg"
-          disabled={!$runtimeCapabilities.nativeFfmpeg}>native_ffmpeg</option
-        >
-      </select>
-      <label
-        for="transport-renderer"
+        HTMLVideo / WebGL2
+      </div>
+      <span
         class="text-surface-500 uppercase font-bold text-[0.55rem] ml-1"
-        >GPU</label
+        >Goal</span
       >
-      <select
-        id="transport-renderer"
-        value={$runtimeCapabilities.selectedRenderer}
-        on:change={switchRenderer}
-        class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm w-16 outline-none"
+      <div
+        class="rounded-sm border border-error-500/70 bg-error-500/10 px-2 py-0.5 text-[0.6rem] font-mono text-error-200"
       >
-        <option value="webgl2">webgl2</option>
-        <option value="webgpu" disabled={!$runtimeCapabilities.webgpu}
-          >webgpu</option
-        >
-      </select>
+        MasterSelects WebGPU engine required
+      </div>
       <button
         class="bg-primary-500/20 text-primary-500 border border-primary-500 hover:bg-primary-500 hover:text-surface-950 px-1.5 py-0.5 rounded-sm font-bold ml-auto"
         on:click={refresh}>Refresh</button
@@ -305,12 +254,6 @@
         title="Browser/WebView capability probe only"
       >
         WGPU {$runtimeCapabilities.webgpu ? "probe" : "no"}
-      </span>
-      <span
-        class="px-1.5 py-0.5 rounded-sm border border-surface-700 bg-surface-900 text-surface-300 font-mono"
-        title="Browser/WebView capability probe only"
-      >
-        WCDC {$runtimeCapabilities.webcodecs ? "probe" : "no"}
       </span>
     </div>
   </div>
@@ -350,10 +293,12 @@
       >
     </div>
     <div class="flex justify-between gap-2">
-      <span>{capabilityTruth.rendererSummary}</span>
-      <span>{capabilityTruth.decodeSummary}</span>
+      <span>{capabilityTruth.engineSummary}</span>
+      <span class={capabilityTruth.tone === "error" ? "text-error-300" : "text-emerald-300"}>
+        {capabilityTruth.integrationNote}
+      </span>
     </div>
-    <div class="text-[0.52rem] text-surface-400 normal-case tracking-normal">
+    <div class="text-[0.52rem] normal-case tracking-normal {capabilityTruth.tone === 'error' ? 'text-error-200' : 'text-surface-400'}">
       {capabilityTruth.integrationNote}
     </div>
   </div>

@@ -19,7 +19,7 @@ const makeEvent = (
 });
 
 describe("buildTimelineOnsetLanes", () => {
-  it("keeps analyzed, live fallback, and count/debug markers in separate lanes", () => {
+  it("keeps only analyzed markers on the waveform lane", () => {
     const lanes = buildTimelineOnsetLanes({
       authoritative: [makeEvent("ess-1", "essentia", 1)],
       liveFallback: [makeEvent("det-1", "detected", 2)],
@@ -30,11 +30,9 @@ describe("buildTimelineOnsetLanes", () => {
     });
 
     expect(lanes.authoritative.map((marker) => marker.id)).toEqual(["ess-1"]);
-    expect(lanes.liveFallback.map((marker) => marker.id)).toEqual(["det-1"]);
-    expect(lanes.countedDebug.map((marker) => marker.id)).toEqual(["count-1"]);
+    expect(lanes.liveFallback).toEqual([]);
+    expect(lanes.countedDebug).toEqual([]);
     expect(lanes.authoritative[0]?.position).toBe(25);
-    expect(lanes.liveFallback[0]?.position).toBe(50);
-    expect(lanes.countedDebug[0]?.position).toBe(75);
   });
 
   it("filters markers outside the visible viewport", () => {

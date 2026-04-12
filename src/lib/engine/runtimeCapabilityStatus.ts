@@ -1,38 +1,26 @@
 import type { RuntimeCapabilities } from '$lib/types/engine';
 
 export interface RuntimeCapabilityTruth {
-  rendererSummary: string;
-  decodeSummary: string;
+  engineSummary: string;
   integrationNote: string;
+  tone: 'ok' | 'error';
 }
 
 export function describeRuntimeCapabilityTruth(capabilities: RuntimeCapabilities): RuntimeCapabilityTruth {
-  const rendererSummary =
-    capabilities.selectedRenderer === 'webgpu'
-      ? capabilities.webgpu
-        ? 'Renderer pref: WebGPU probe only'
-        : 'Renderer active: WebGL2 fallback'
-      : 'Renderer active: WebGL2 fallback';
-
-  const decodeSummary =
-    capabilities.selectedDecode === 'webcodecs'
-      ? capabilities.webcodecs
-        ? 'Decode pref: WebCodecs probe only'
-        : 'Decode active: HTMLVideo fallback'
-      : capabilities.selectedDecode === 'native_ffmpeg'
-        ? capabilities.nativeFfmpeg
-          ? 'Decode active: native_ffmpeg desktop path'
-          : 'Decode active: HTMLVideo fallback'
-        : 'Decode active: HTMLVideo fallback';
-
+  const webGpuActive = capabilities.activationState === 'webgpu_active';
+  const engineSummary = webGpuActive
+    ? `Engine active: ${capabilities.activeRenderer.toUpperCase()} / ${capabilities.activeDecode}`
+    : `Engine active: ${capabilities.activeRenderer.toUpperCase()} / ${capabilities.activeDecode}`;
   const integrationNote =
-    capabilities.selectedRenderer === 'webgpu' || capabilities.selectedDecode === 'webcodecs'
-      ? 'WebGPU/WebCodecs selections are capability preferences only until telemetry-backed deck integration is live.'
-      : 'Current live deck path remains the HTMLVideo/WebGL2 fallback.';
+    webGpuActive
+      ? 'MasterSelects-style WebGPU deck playback is active.'
+      : capabilities.engineLoadError ??
+        capabilities.fallbackReason ??
+        'Current live deck path remains on the HTMLVideo/WebGL2 transition path.';
 
   return {
-    rendererSummary,
-    decodeSummary,
-    integrationNote
+    engineSummary,
+    integrationNote,
+    tone: webGpuActive ? 'ok' : 'error'
   };
 }

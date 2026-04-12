@@ -3,13 +3,13 @@ import type { OnsetTransportState } from "$lib/stores/runtime";
 export interface OnsetTransportPresentation {
   headline: string;
   detail: string;
-  tone: "neutral" | "armed" | "warning";
+  tone: "neutral" | "armed" | "warning" | "error";
 }
 
 const progressModeLabel = (mode: OnsetTransportState["progressMode"]): string => {
   switch (mode) {
     case "detected-fallback":
-      return "Detected fallback";
+      return "Awaiting analyzed onsets";
     case "quantized":
       return "Quantized boundary";
     case "analyzed":
@@ -51,6 +51,6 @@ export function describeOnsetTransportState(
   return {
     headline: "Waiting for count",
     detail: `${sourceLabel} · ${progress}`,
-    tone: "neutral",
+    tone: state.progressMode === "detected-fallback" ? "error" : "neutral",
   };
 }

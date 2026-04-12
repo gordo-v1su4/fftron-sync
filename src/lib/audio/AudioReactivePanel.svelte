@@ -123,6 +123,7 @@
     progressMode: "analyzed",
     lastTransportSlot: null,
   });
+  let onsetDetectionState: "waiting" | "ready" | "error" = "waiting";
 
   const normalizeSectionLabel = (label: string): string => {
     const clean = label
@@ -621,22 +622,6 @@
   };
 
   const pushDetectedOnset = (value: number, timestamp: number) => {
-    const timeSeconds = audioElement && $audioRuntime.source === "file" ? audioElement.currentTime || 0 : 0;
-    liveDetectedOnsets.update((events) =>
-      [
-        ...events,
-        {
-          id: `det-${Math.round(timestamp)}-${events.length}`,
-          timestampMs: Date.now(),
-          timeSeconds,
-          band: target,
-          value,
-          threshold,
-          counted: false,
-          source: "detected" as const,
-        },
-      ].slice(-256),
-    );
     lastDetectedOnsetMs = Date.now();
   };
 
@@ -973,9 +958,7 @@
         updatedAtMs: Date.now(),
       });
 
-      status = usedFallback
-        ? "Essentia detection complete (fallback mode)."
-        : "Essentia detection complete.";
+      status = "Essentia detection complete.";
     } catch (error) {
       markers.set([]);
       activeSection.set("");
@@ -1021,6 +1004,13 @@
     endHz: effectRangeEndHz,
   });
   $: onsetTransportPresentation = describeOnsetTransportState($onsetTransportState);
+  $: onsetDetectionState = essentiaLoading
+    ? "waiting"
+    : status.startsWith("Essentia detection failed:")
+      ? "error"
+      : $audioOnsets.length > 0 && $detectedTempo.source === "essentia"
+        ? "ready"
+        : "waiting";
 
   $: if (
     $timelineSeekRequest &&
@@ -1124,15 +1114,31 @@
       </div>
 
       <div
-        class="flex items-center justify-between gap-2 bg-emerald-500/10 border border-emerald-500/60 rounded-sm px-1.5 py-0.5 font-mono text-[0.6rem]"
+        class="flex items-center justify-between gap-2 rounded-sm px-1.5 py-0.5 font-mono text-[0.6rem] {onsetDetectionState === 'ready'
+          ? 'bg-emerald-500/10 border border-emerald-500/60'
+          : onsetDetectionState === 'error'
+            ? 'bg-error-500/10 border border-error-500/70'
+            : 'bg-surface-950 border border-surface-700'}"
       >
-        <span class="uppercase text-emerald-300 font-bold tracking-wide"
-          >BPM Detected</span
+        <span class="uppercase font-bold tracking-wide {onsetDetectionState === 'ready'
+          ? 'text-emerald-300'
+          : onsetDetectionState === 'error'
+            ? 'text-error-200'
+            : 'text-surface-400'}"
+          >Onsets</span
         >
-        <span class="text-emerald-200">
-          {$detectedTempo.bpm !== null
-            ? $detectedTempo.bpm.toFixed(2)
-            : "Waiting for detection"}
+        <span class={onsetDetectionState === 'ready'
+          ? 'text-emerald-200'
+          : onsetDetectionState === 'error'
+            ? 'text-error-100'
+            : 'text-surface-300'}>
+          {onsetDetectionState === "ready"
+            ? `${$audioOnsets.length} returned · ${$detectedTempo.bpm?.toFixed(2) ?? "--"} BPM`
+            : onsetDetectionState === "error"
+              ? status.replace("Essentia detection failed: ", "")
+              : essentiaLoading
+                ? "Detecting analyzed onsets…"
+                : "Waiting for analyzed onsets"}
         </span>
       </div>
 
@@ -1452,6 +1458,8 @@
         <div
           class="rounded-sm border px-2 py-1 text-[0.55rem] font-mono uppercase tracking-wide {onsetTransportPresentation.tone === 'armed'
             ? 'border-emerald-500/70 bg-emerald-500/10 text-emerald-100'
+            : onsetTransportPresentation.tone === 'error'
+              ? 'border-error-500/70 bg-error-500/10 text-error-100'
             : onsetTransportPresentation.tone === 'warning'
               ? 'border-amber-400/70 bg-amber-500/10 text-amber-100'
               : 'border-surface-700 bg-surface-950 text-surface-300'}"

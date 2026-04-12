@@ -2,6 +2,11 @@ import type { QuantizeGrid } from '$lib/types/timeline';
 
 export type RendererBackend = 'webgl2' | 'webgpu';
 export type DecodeBackend = 'htmlvideo' | 'webcodecs' | 'native_ffmpeg';
+export type EngineActivationState =
+  | 'htmlvideo_fallback'
+  | 'webgpu_active'
+  | 'webgpu_required'
+  | 'engine_error';
 export type TempoSource = 'manual' | 'tap' | 'link' | 'midi_clock' | 'auto';
 export type AudioInputSource = 'none' | 'file' | 'mic';
 export type ReactiveBandTarget = 'low' | 'mid' | 'high' | 'full';
@@ -20,6 +25,11 @@ export interface RuntimeCapabilities {
   rustFfmpegFeature: boolean;
   selectedRenderer: RendererBackend;
   selectedDecode: DecodeBackend;
+  activeRenderer: RendererBackend;
+  activeDecode: DecodeBackend;
+  activationState: EngineActivationState;
+  fallbackReason: string | null;
+  engineLoadError: string | null;
   hotDecks: HotDeckFeatureFlags;
 }
 

@@ -76,18 +76,6 @@ export const buildTimelineOnsetLanes = ({
     viewportWindow,
     "Analyzed",
   ),
-  liveFallback: buildMarkers(
-    liveFallback.filter((event) => event.source === "detected"),
-    durationSeconds,
-    viewportStart,
-    viewportWindow,
-    "Live fallback",
-  ),
-  countedDebug: buildMarkers(
-    countedDebug.filter((event) => event.source === "counted"),
-    durationSeconds,
-    viewportStart,
-    viewportWindow,
-    "Count/debug",
-  ),
+  liveFallback: [],
+  countedDebug: [],
 });

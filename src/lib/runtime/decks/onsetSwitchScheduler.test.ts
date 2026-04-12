@@ -44,7 +44,7 @@ describe('advanceOnsetSwitchScheduler', () => {
     expect(result.state.armedAtSlotIndex).toBe(2);
   });
 
-  it('falls back to detected onsets when analyzed onsets are unavailable', () => {
+  it('waits for analyzed onsets instead of counting detected fallback events', () => {
     const result = advanceOnsetSwitchScheduler(createOnsetSwitchSchedulerState(1), {
       transportTimeSeconds: 0.55,
       bpm: 120,
@@ -61,9 +61,9 @@ describe('advanceOnsetSwitchScheduler', () => {
       ],
     });
 
-    expect(result.state.progressMode).toBe('detected-fallback');
-    expect(result.countedEvents).toHaveLength(1);
-    expect(result.countedEvents[0]?.id).toBe('count-detected-fallback-d-1');
+    expect(result.state.progressMode).toBe('analyzed');
+    expect(result.countedEvents).toHaveLength(0);
+    expect(result.state.progressCount).toBe(0);
   });
 
   it('arms at the target slot and switches only on the following transport boundary', () => {

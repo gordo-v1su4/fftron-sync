@@ -83,6 +83,11 @@ export const runtimeCapabilities = writable<RuntimeCapabilities>({
   rustFfmpegFeature: false,
   selectedRenderer: 'webgl2',
   selectedDecode: 'htmlvideo',
+  activeRenderer: 'webgl2',
+  activeDecode: 'htmlvideo',
+  activationState: 'htmlvideo_fallback',
+  fallbackReason: 'Current live deck path remains on the HTMLVideo/WebGL2 transition path.',
+  engineLoadError: 'MasterSelects-style WebGPU engine is not active yet.',
   hotDecks: {
     useWebGpuHotDecks: false,
     useVideoTimeShaper: false,

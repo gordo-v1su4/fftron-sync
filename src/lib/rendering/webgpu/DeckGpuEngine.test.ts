@@ -14,6 +14,11 @@ const capabilities = (overrides: Partial<RuntimeCapabilities> = {}): RuntimeCapa
   rustFfmpegFeature: false,
   selectedRenderer: 'webgpu',
   selectedDecode: 'webcodecs',
+  activeRenderer: 'webgpu',
+  activeDecode: 'webcodecs',
+  activationState: 'webgpu_active',
+  fallbackReason: null,
+  engineLoadError: null,
   hotDecks: {
     useWebGpuHotDecks: true,
     useVideoTimeShaper: true,

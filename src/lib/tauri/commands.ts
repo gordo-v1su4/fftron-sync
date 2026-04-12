@@ -22,6 +22,11 @@ const localState: LocalRuntimeState = {
     rustFfmpegFeature: false,
     selectedRenderer: 'webgl2',
     selectedDecode: 'htmlvideo',
+    activeRenderer: 'webgl2',
+    activeDecode: 'htmlvideo',
+    activationState: 'htmlvideo_fallback',
+    fallbackReason: 'Current live deck path remains on the HTMLVideo/WebGL2 transition path.',
+    engineLoadError: 'MasterSelects-style WebGPU engine is not active yet.',
     hotDecks: {
       useWebGpuHotDecks: false,
       useVideoTimeShaper: false,
@@ -101,6 +106,8 @@ const validateLocalBundle = (bundle: TheatreExportBundle): boolean => {
 const refreshBrowserCapabilities = (): RuntimeCapabilities => {
   const webgpu = browser && typeof navigator !== 'undefined' && 'gpu' in navigator;
   const webcodecs = browser && typeof window !== 'undefined' && 'VideoDecoder' in window;
+  const webGpuRequested = localState.runtimeCapabilities.selectedRenderer === 'webgpu' ||
+    localState.runtimeCapabilities.hotDecks.useWebGpuHotDecks;
 
   localState.runtimeCapabilities = {
     ...localState.runtimeCapabilities,
@@ -114,6 +121,16 @@ const refreshBrowserCapabilities = (): RuntimeCapabilities => {
       localState.runtimeCapabilities.selectedDecode === 'webcodecs' && !webcodecs
         ? 'htmlvideo'
         : localState.runtimeCapabilities.selectedDecode
+    ,
+    activeRenderer: 'webgl2',
+    activeDecode: 'htmlvideo',
+    activationState: webGpuRequested ? 'webgpu_required' : 'htmlvideo_fallback',
+    fallbackReason: webGpuRequested
+      ? 'MasterSelects-style WebGPU playback engine is not wired as the active deck path yet.'
+      : 'Current live deck path remains on the HTMLVideo/WebGL2 transition path.',
+    engineLoadError: webGpuRequested
+      ? 'MasterSelects-style WebGPU engine is not active yet.'
+      : null
   };
 
   return localState.runtimeCapabilities;

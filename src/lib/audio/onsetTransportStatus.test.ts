@@ -20,20 +20,20 @@ describe("describeOnsetTransportState", () => {
     });
   });
 
-  it("surfaces fallback blocked reasons without pretending analyzed authority", () => {
+  it("surfaces missing analyzed onsets as an error-state wait condition", () => {
     expect(
       describeOnsetTransportState({
-        progressCount: 4,
+        progressCount: 0,
         target: 4,
-        armed: true,
-        blockedReason: "next clip deck-b is not ready",
+        armed: false,
+        blockedReason: null,
         progressMode: "detected-fallback",
-        lastTransportSlot: 8,
+        lastTransportSlot: null,
       }),
     ).toEqual({
-      headline: "Holding switch",
-      detail: "Detected fallback · 4/4 · next clip deck-b is not ready",
-      tone: "warning",
+      headline: "Waiting for count",
+      detail: "Awaiting analyzed onsets · 0/4",
+      tone: "error",
     });
   });
 });
