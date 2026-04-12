@@ -4,13 +4,14 @@ export interface RuntimeCapabilityTruth {
   engineSummary: string;
   integrationNote: string;
   tone: 'ok' | 'error';
+  rendererBadge: string;
+  goalBadge: string;
+  probeBadge: string;
 }
 
 export function describeRuntimeCapabilityTruth(capabilities: RuntimeCapabilities): RuntimeCapabilityTruth {
   const webGpuActive = capabilities.activationState === 'webgpu_active';
-  const engineSummary = webGpuActive
-    ? `Engine active: ${capabilities.activeRenderer.toUpperCase()} / ${capabilities.activeDecode}`
-    : `Engine active: ${capabilities.activeRenderer.toUpperCase()} / ${capabilities.activeDecode}`;
+  const engineSummary = `Engine active: ${capabilities.activeRenderer.toUpperCase()} / ${capabilities.activeDecode}`;
   const integrationNote =
     webGpuActive
       ? 'MasterSelects-style WebGPU deck playback is active.'
@@ -21,6 +22,14 @@ export function describeRuntimeCapabilityTruth(capabilities: RuntimeCapabilities
   return {
     engineSummary,
     integrationNote,
-    tone: webGpuActive ? 'ok' : 'error'
+    tone: webGpuActive ? 'ok' : 'error',
+    rendererBadge: `${capabilities.activeRenderer.toUpperCase()} / ${capabilities.activeDecode}`,
+    goalBadge:
+      capabilities.activationState === 'engine_error'
+        ? 'WebGPU engine error'
+        : webGpuActive
+          ? 'MasterSelects WebGPU live'
+          : 'MasterSelects WebGPU required',
+    probeBadge: webGpuActive ? 'WGPU live' : `WGPU ${capabilities.webgpu ? 'probe' : 'no'}`
   };
 }

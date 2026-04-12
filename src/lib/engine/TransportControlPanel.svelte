@@ -232,28 +232,38 @@
         >Rndr</span
       >
       <div
-        class="rounded-sm border border-surface-700 bg-surface-900 px-2 py-0.5 text-[0.6rem] font-mono text-surface-200"
+        class={`rounded-sm border px-2 py-0.5 text-[0.6rem] font-mono ${capabilityTruth.tone === 'ok'
+          ? 'border-emerald-500/70 bg-emerald-500/10 text-emerald-200'
+          : 'border-surface-700 bg-surface-900 text-surface-200'}`}
+        title={capabilityTruth.integrationNote}
       >
-        HTMLVideo / WebGL2
+        {capabilityTruth.rendererBadge}
       </div>
       <span
         class="text-surface-500 uppercase font-bold text-[0.55rem] ml-1"
         >Goal</span
       >
       <div
-        class="rounded-sm border border-error-500/70 bg-error-500/10 px-2 py-0.5 text-[0.6rem] font-mono text-error-200"
+        class={`rounded-sm border px-2 py-0.5 text-[0.6rem] font-mono ${capabilityTruth.tone === 'ok'
+          ? 'border-emerald-500/70 bg-emerald-500/10 text-emerald-200'
+          : 'border-error-500/70 bg-error-500/10 text-error-200'}`}
+        title={capabilityTruth.integrationNote}
       >
-        MasterSelects WebGPU engine required
+        {capabilityTruth.goalBadge}
       </div>
       <button
         class="bg-primary-500/20 text-primary-500 border border-primary-500 hover:bg-primary-500 hover:text-surface-950 px-1.5 py-0.5 rounded-sm font-bold ml-auto"
         on:click={refresh}>Refresh</button
       >
       <span
-        class="px-1.5 py-0.5 rounded-sm border border-surface-700 bg-surface-900 text-surface-300 font-mono"
-        title="Browser/WebView capability probe only"
+        class={`px-1.5 py-0.5 rounded-sm border font-mono ${capabilityTruth.tone === 'ok'
+          ? 'border-emerald-500/70 bg-emerald-500/10 text-emerald-200'
+          : 'border-surface-700 bg-surface-900 text-surface-300'}`}
+        title={capabilityTruth.tone === 'ok'
+          ? capabilityTruth.integrationNote
+          : 'Browser/WebView capability probe only until the WebGPU engine is active'}
       >
-        WGPU {$runtimeCapabilities.webgpu ? "probe" : "no"}
+        {capabilityTruth.probeBadge}
       </span>
     </div>
   </div>

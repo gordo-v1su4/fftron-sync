@@ -29,6 +29,9 @@ describe('describeRuntimeCapabilityTruth', () => {
       engineSummary: 'Engine active: WEBGL2 / htmlvideo',
       integrationNote: 'MasterSelects-style WebGPU engine is not active yet.',
       tone: 'error',
+      rendererBadge: 'WEBGL2 / htmlvideo',
+      goalBadge: 'MasterSelects WebGPU required',
+      probeBadge: 'WGPU no'
     });
   });
 
@@ -49,13 +52,16 @@ describe('describeRuntimeCapabilityTruth', () => {
           activeDecode: 'htmlvideo',
           activationState: 'webgpu_required',
           fallbackReason: 'MasterSelects-style WebGPU playback engine is not wired as the active deck path yet.',
-          engineLoadError: 'MasterSelects-style WebGPU engine is not active yet.',
+          engineLoadError: 'MasterSelects-style WebGPU engine is not active yet.'
         })
       )
     ).toEqual({
       engineSummary: 'Engine active: WEBGL2 / htmlvideo',
       integrationNote: 'MasterSelects-style WebGPU engine is not active yet.',
       tone: 'error',
+      rendererBadge: 'WEBGL2 / htmlvideo',
+      goalBadge: 'MasterSelects WebGPU required',
+      probeBadge: 'WGPU probe'
     });
   });
 
@@ -71,13 +77,39 @@ describe('describeRuntimeCapabilityTruth', () => {
           activeDecode: 'webcodecs',
           activationState: 'webgpu_active',
           fallbackReason: null,
-          engineLoadError: null,
+          engineLoadError: null
         })
       )
     ).toEqual({
       engineSummary: 'Engine active: WEBGPU / webcodecs',
       integrationNote: 'MasterSelects-style WebGPU deck playback is active.',
       tone: 'ok',
+      rendererBadge: 'WEBGPU / webcodecs',
+      goalBadge: 'MasterSelects WebGPU live',
+      probeBadge: 'WGPU live'
+    });
+  });
+
+  it('labels explicit engine load failures without pretending the goal is met', () => {
+    expect(
+      describeRuntimeCapabilityTruth(
+        capabilities({
+          webgpu: true,
+          selectedRenderer: 'webgpu',
+          activeRenderer: 'webgl2',
+          activeDecode: 'htmlvideo',
+          activationState: 'engine_error',
+          fallbackReason: null,
+          engineLoadError: 'navigator.gpu is unavailable'
+        })
+      )
+    ).toEqual({
+      engineSummary: 'Engine active: WEBGL2 / htmlvideo',
+      integrationNote: 'navigator.gpu is unavailable',
+      tone: 'error',
+      rendererBadge: 'WEBGL2 / htmlvideo',
+      goalBadge: 'WebGPU engine error',
+      probeBadge: 'WGPU probe'
     });
   });
 });

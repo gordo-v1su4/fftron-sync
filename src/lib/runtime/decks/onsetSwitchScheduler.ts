@@ -59,6 +59,15 @@ const SLOT_LOOKAHEAD_SECONDS = 0.05;
 
 const clampTarget = (target: number): number => Math.max(1, Math.round(Number(target) || 1));
 
+const findFirstFutureOnsetIndex = (events: OnsetEventLike[], deadline: number): number => {
+  for (let index = 0; index < events.length; index += 1) {
+    if (events[index]?.timeSeconds > deadline) {
+      return index;
+    }
+  }
+  return events.length;
+};
+
 export const createOnsetSwitchSchedulerState = (
   target = 4,
 ): OnsetSwitchSchedulerState => ({
@@ -142,6 +151,16 @@ export const advanceOnsetSwitchScheduler = (
 
   if (input.envelopeGateEnabled) {
     if (input.analyzedOnsets.length > 0) {
+      if (
+        state.lastCountedAnalyzedIndex === 0 &&
+        state.progressCount === 0 &&
+        state.lastTransportTimeSeconds > 0
+      ) {
+        const firstFutureAnalyzedIndex = findFirstFutureOnsetIndex(input.analyzedOnsets, deadline);
+        if (firstFutureAnalyzedIndex > state.target) {
+          state.lastCountedAnalyzedIndex = firstFutureAnalyzedIndex;
+        }
+      }
       state.lastCountedAnalyzedIndex = pushFrom(
         input.analyzedOnsets,
         state.lastCountedAnalyzedIndex,
