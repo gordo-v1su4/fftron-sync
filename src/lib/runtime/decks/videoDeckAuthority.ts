@@ -164,6 +164,7 @@ export function advanceVideoDeckAuthority(
   const playbackActive =
     input.audioSource === 'file' &&
     input.audioIsPlaying &&
+    state.videoPlaybackActive &&
     playable.length >= 2 &&
     Boolean(state.selectedClipId);
 
@@ -295,6 +296,7 @@ const authorityStateMatches = (
   left.onsetSwitchTarget === right.onsetSwitchTarget &&
   left.switchSkipChancePercent === right.switchSkipChancePercent &&
   left.onsetCountForClip === right.onsetCountForClip &&
+  left.videoPlaybackActive === right.videoPlaybackActive &&
   left.status === right.status &&
   left.soloLane === right.soloLane &&
   left.laneMuted.length === right.laneMuted.length &&

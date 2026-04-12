@@ -171,9 +171,6 @@
     apiKey: string,
   ): Promise<{ full: EssentiaFullResponse; usedFallback: boolean }> => {
     try {
-      const full = await analyzeEssentiaFull(file, apiKey);
-      return { full, usedFallback: false };
-    } catch (fullError) {
       const [rhythm, structure] = await Promise.all([
         analyzeEssentiaRhythm(file, apiKey),
         analyzeEssentiaStructure(file, apiKey),
@@ -187,8 +184,14 @@
         vocals: null,
       };
 
-      console.warn("Essentia /analyze/full failed; used rhythm+structure fallback", fullError);
-      return { full: fallbackFull, usedFallback: true };
+      return { full: fallbackFull, usedFallback: false };
+    } catch (rhythmStructureError) {
+      const full = await analyzeEssentiaFull(file, apiKey);
+      console.warn(
+        "Essentia /analyze/rhythm+/analyze/structure failed; fell back to /analyze/full",
+        rhythmStructureError,
+      );
+      return { full, usedFallback: true };
     }
   };
 
@@ -522,9 +525,9 @@
     micNode?.disconnect();
   };
 
-  const ensureAudioGraph = async () => {
+  const ensureAudioGraph = async (resumeContext = true) => {
     if (!context) context = new AudioContext();
-    if (context.state === "suspended") await context.resume();
+    if (resumeContext && context.state === "suspended") await context.resume();
 
     if (!analyser) {
       analyser = context.createAnalyser();
@@ -543,7 +546,7 @@
 
   const attachFileSource = async () => {
     if (!audioElement) return;
-    await ensureAudioGraph();
+    await ensureAudioGraph(false);
     if (!context || !analyser || !monitorGain) return;
 
     if (!mediaNode) {

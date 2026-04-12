@@ -38,6 +38,7 @@ const baseState = (): VideoDeckAuthorityState => ({
   onsetSwitchTarget: 2,
   switchSkipChancePercent: 0,
   onsetCountForClip: 0,
+  videoPlaybackActive: true,
   status: '',
 });
 

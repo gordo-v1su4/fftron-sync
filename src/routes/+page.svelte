@@ -116,7 +116,7 @@
   </header>
 
   <div class="flex flex-col xl:flex-row gap-2 flex-1 min-h-0">
-    <div class="flex flex-col gap-2 xl:w-3/5 min-w-0 min-h-0">
+    <div class="flex flex-col gap-2 xl:basis-[56%] xl:max-w-[56%] min-w-0 min-h-0">
       <div class="flex-none">
         <TransportControlPanel />
       </div>
@@ -130,7 +130,7 @@
         />
       </div>
     </div>
-    <div class="flex flex-col gap-2 xl:w-2/5 min-w-0 min-h-0">
+    <div class="flex flex-col gap-2 xl:basis-[44%] xl:max-w-[44%] min-w-0 min-h-0">
       <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
         <AudioReactivePanel />
       </div>

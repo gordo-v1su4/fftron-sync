@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import {
     applyVideoTimeShape,
     evaluateAudioTrigger,
@@ -14,6 +14,7 @@
     automationRuntime,
     audioBands,
     reactiveEnvelope,
+    runtimeCapabilities,
     tempoState,
     transportAlignment,
   } from "$lib/stores/runtime";
@@ -29,6 +30,7 @@
     type VideoDeckPrewarmStatus,
   } from "$lib/video/hotDeckSwitchStatus";
   import { enforceSilentVideoElement } from "$lib/video/mediaMute";
+  import { WebGpuVideoPresenter } from "$lib/rendering/webgpu/WebGpuVideoPresenter";
 
   export let duration = 0;
   export let currentTime = 0;
@@ -44,6 +46,7 @@
   let selectedClipId = "";
   let player: HTMLVideoElement | null = null;
   let prewarmPlayer: HTMLVideoElement | null = null;
+  let webGpuCanvas: HTMLCanvasElement | null = null;
   let authorityStatus = "";
   let uiStatus = "Drop or upload clips to begin playback.";
   let envelopeGateEnabled = true;
@@ -72,9 +75,26 @@
   let uploadLane = 0;
   let laneMuted = [false, false, false];
   let soloLane: number | null = null;
+  let lastSelectedClipId = "";
   let prewarmReady = false;
+  let webGpuPresenter: WebGpuVideoPresenter | null = null;
+  let webGpuEngineReady = false;
+  let webGpuEngineError: string | null = null;
+  let webGpuFramePresented = false;
+  let videoFrameCallbackId: number | null = null;
+  let videoFrameCallbackSource: HTMLVideoElement | null = null;
+  let lastPresentedFrameAtMs = 0;
+  let videoPlaybackActive = false;
+  let switchInFlight = false;
   const speedDomainMin = SPEED_AUTOMATION_DOMAIN.min;
   const speedDomainMax = SPEED_AUTOMATION_DOMAIN.max;
+
+  type VideoFrameCallbackCapable = HTMLVideoElement & {
+    requestVideoFrameCallback?: (
+      callback: (now: DOMHighResTimeStamp, metadata: VideoFrameCallbackMetadata) => void,
+    ) => number;
+    cancelVideoFrameCallback?: (handle: number) => void;
+  };
 
   interface TimeShapePreset {
     id: string;
@@ -187,6 +207,141 @@
     return `${Math.round(value)}Hz`;
   };
 
+  const syncEngineTruth = () => {
+    const webGpuActive = webGpuEngineReady && webGpuFramePresented && !webGpuEngineError;
+    runtimeCapabilities.update((state) => ({
+      ...state,
+      selectedRenderer: "webgpu",
+      selectedDecode: "htmlvideo",
+      hotDecks: {
+        ...state.hotDecks,
+        useWebGpuHotDecks: true,
+      },
+      activeRenderer: webGpuActive ? "webgpu" : "webgl2",
+      activeDecode: "htmlvideo",
+      activationState: webGpuActive
+        ? "webgpu_active"
+        : webGpuEngineError
+          ? "engine_error"
+          : "webgpu_required",
+      fallbackReason: webGpuActive
+        ? null
+        : "MasterSelects-style WebGPU playback has not produced a valid frame yet.",
+      engineLoadError: webGpuActive ? null : webGpuEngineError,
+    }));
+  };
+
+  const ensureWebGpuPresenter = async () => {
+    if (webGpuEngineReady || !webGpuCanvas) return;
+    try {
+      if (!webGpuPresenter) webGpuPresenter = new WebGpuVideoPresenter();
+      await webGpuPresenter.attach(webGpuCanvas);
+      webGpuPresenter.setSource(player);
+      webGpuEngineReady = true;
+      webGpuEngineError = null;
+      webGpuFramePresented = false;
+    } catch (error) {
+      webGpuEngineReady = false;
+      webGpuEngineError = error instanceof Error ? error.message : "unknown engine error";
+      webGpuFramePresented = false;
+    }
+    syncEngineTruth();
+  };
+
+  const syncVideoPlaybackState = () => {
+    videoPlaybackActive = Boolean(
+      !switchInFlight && player && !player.paused && !player.ended && player.currentSrc,
+    );
+  };
+
+  const resumeCurrentPlayer = async () => {
+    if (!player) return;
+    try {
+      await player.play();
+      switchInFlight = false;
+      syncVideoPlaybackState();
+      if (!(player as VideoFrameCallbackCapable).requestVideoFrameCallback) {
+        renderWebGpuFrame();
+      }
+    } catch (error) {
+      switchInFlight = false;
+      syncVideoPlaybackState();
+      uiStatus = `Video playback failed: ${error instanceof Error ? error.message : "unknown error"}`;
+    }
+  };
+
+  const renderWebGpuFrame = () => {
+    if (!webGpuEngineReady) return;
+    try {
+      const rendered = webGpuPresenter?.render() ?? false;
+      if (rendered) {
+        webGpuFramePresented = true;
+      }
+    } catch (error) {
+      webGpuEngineReady = false;
+      webGpuFramePresented = false;
+      webGpuEngineError = error instanceof Error ? error.message : "unknown engine error";
+      syncEngineTruth();
+      return;
+    }
+    syncEngineTruth();
+  };
+
+  const cancelVideoFramePump = () => {
+    const source = videoFrameCallbackSource as VideoFrameCallbackCapable | null;
+    if (
+      source &&
+      videoFrameCallbackId !== null &&
+      typeof source.cancelVideoFrameCallback === "function"
+    ) {
+      source.cancelVideoFrameCallback(videoFrameCallbackId);
+    }
+    videoFrameCallbackId = null;
+    videoFrameCallbackSource = null;
+  };
+
+  const scheduleVideoFramePump = (source: HTMLVideoElement | null = player) => {
+    const frameSource = source as VideoFrameCallbackCapable | null;
+    if (
+      !webGpuEngineReady ||
+      !frameSource ||
+      typeof frameSource.requestVideoFrameCallback !== "function"
+    ) {
+      cancelVideoFramePump();
+      return;
+    }
+
+    if (videoFrameCallbackSource === frameSource && videoFrameCallbackId !== null) return;
+    cancelVideoFramePump();
+
+    const pump = () => {
+      if (
+        !webGpuEngineReady ||
+        !frameSource.currentSrc ||
+        frameSource !== player ||
+        typeof frameSource.requestVideoFrameCallback !== "function"
+      ) {
+        cancelVideoFramePump();
+        return;
+      }
+
+      videoFrameCallbackSource = frameSource;
+      videoFrameCallbackId = frameSource.requestVideoFrameCallback((_, metadata) => {
+        videoFrameCallbackId = null;
+        lastPresentedFrameAtMs = performance.now();
+        currentTime = metadata.mediaTime ?? frameSource.currentTime ?? 0;
+        renderWebGpuFrame();
+        if (!frameSource.paused && !frameSource.ended) {
+          pump();
+        } else {
+          cancelVideoFramePump();
+        }
+      });
+    };
+
+    pump();
+  };
+
   let currentClip: VideoDeckClipRecord | undefined = undefined;
   let currentClipIndex = -1;
   let currentTimeShapePreset: TimeShapePreset = timeShapePresets[0];
@@ -241,6 +396,15 @@
   $: timeShaperTriggerLabel = `${formatFrequencyLabel($reactiveEnvelope.rangeStartHz)}–${formatFrequencyLabel($reactiveEnvelope.rangeEndHz)}`;
   $: enforceSilentVideoElement(player);
   $: enforceSilentVideoElement(prewarmPlayer);
+  $: if (webGpuEngineReady) {
+    webGpuPresenter?.setSource(player);
+    scheduleVideoFramePump(player);
+  } else {
+    cancelVideoFramePump();
+  }
+  $: if (webGpuCanvas) {
+    void ensureWebGpuPresenter();
+  }
   $: videoDeckAuthority.update((state) => ({
     ...state,
     clips,
@@ -253,10 +417,16 @@
     switchSkipChancePercent,
     prewarmClipId,
     prewarmReady,
+    videoPlaybackActive,
   }));
-  $: if (player && currentClip && player.currentSrc && !player.currentSrc.includes(currentClip.url)) {
-    pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
-    resumeAfterSwitch = !player.paused;
+  $: if (selectedClipId !== lastSelectedClipId) {
+    if (lastSelectedClipId && player) {
+      pendingSeekRatio = duration > 0 ? currentTime / duration : 0;
+      resumeAfterSwitch = videoPlaybackActive || switchInFlight || !player.paused;
+      switchInFlight = true;
+      videoPlaybackActive = false;
+    }
+    lastSelectedClipId = selectedClipId;
   }
   const laneIsActive = (lane: number): boolean =>
     soloLane === null ? !laneMuted[lane] : soloLane === lane;
@@ -437,8 +607,15 @@
     const delta = Math.abs(shapedTime - (player.currentTime || 0));
     const seekThreshold = result.metadata.hardJump ? 0.01 : 0.035;
     const allowSourceJump = result.metadata.playbackMode !== "tapeStop";
+    const minSeekIntervalMs = webGpuEngineReady ? 78 : 45;
 
-    if (allowSourceJump && delta > seekThreshold && now - timeShaperLastAppliedMs > 45) {
+    if (
+      allowSourceJump &&
+      !player.seeking &&
+      player.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+      delta > seekThreshold &&
+      now - timeShaperLastAppliedMs > minSeekIntervalMs
+    ) {
       player.currentTime = shapedTime;
       timeShaperLastAppliedMs = now;
     }
@@ -519,6 +696,9 @@
       if (!player.paused) {
         applySpeedRamp();
         applyTimeShaper();
+        if (!(player as VideoFrameCallbackCapable).requestVideoFrameCallback) {
+          renderWebGpuFrame();
+        }
       }
     };
 
@@ -535,13 +715,15 @@
     applySpeedRamp();
     lastStutterPulseMs = Date.now();
     startPlaybackLoop();
-    await player.play();
+    await resumeCurrentPlayer();
     uiStatus = `Playing ${currentClip?.name ?? "clip"}`;
   };
 
   const pause = () => {
     player?.pause();
     stopPlaybackLoop();
+    cancelVideoFramePump();
+    syncVideoPlaybackState();
     if (player) player.playbackRate = 1;
     currentPlaybackRate = 1;
     lastStutterPulseMs = 0;
@@ -553,6 +735,8 @@
     if (!player) return;
     player.pause();
     stopPlaybackLoop();
+    cancelVideoFramePump();
+    syncVideoPlaybackState();
     player.currentTime = 0;
     player.playbackRate = 1;
     currentPlaybackRate = 1;
@@ -581,8 +765,14 @@
 
   $: seekTo = seekPlayer;
 
+  onMount(() => {
+    syncEngineTruth();
+  });
+
   onDestroy(() => {
     stopPlaybackLoop();
+    cancelVideoFramePump();
+    webGpuPresenter?.detach();
     for (const clip of clips) URL.revokeObjectURL(clip.url);
   });
 </script>
@@ -746,7 +936,7 @@
       class="flex-1 flex flex-col items-center justify-center min-w-0 bg-surface-950 border border-surface-800 rounded-sm overflow-hidden relative p-1"
     >
       <div
-        class="w-full max-h-full aspect-video bg-black rounded-sm border border-surface-900 relative flex overflow-hidden shadow-xl shadow-black/50 mx-auto"
+        class="w-full max-h-full aspect-video bg-black rounded-sm border border-surface-900 relative flex items-center justify-center overflow-hidden shadow-xl shadow-black/50 mx-auto"
       >
         <div class="absolute top-1 right-1 z-10 flex gap-1 pointer-events-none">
           {#if switchNotice.state !== "idle"}
@@ -786,18 +976,33 @@
         </div>
 
         {#if currentClip}
+          <canvas
+            bind:this={webGpuCanvas}
+            class="absolute inset-0 z-[1] m-auto max-h-full max-w-full {webGpuEngineReady && webGpuFramePresented ? '' : 'hidden'}"
+            aria-label="WebGPU deck presenter"
+          ></canvas>
           <video
             bind:this={player}
             src={currentClip.url}
-            class="w-full h-full object-contain"
+            class="w-full h-full object-contain {webGpuEngineReady && webGpuFramePresented ? 'opacity-0 pointer-events-none' : ''}"
             playsinline
             muted
             loop
-            on:play={startPlaybackLoop}
-            on:pause={stopPlaybackLoop}
-            on:ended={stopPlaybackLoop}
+            on:play={() => {
+              syncVideoPlaybackState();
+              startPlaybackLoop();
+            }}
+            on:pause={() => {
+              syncVideoPlaybackState();
+              stopPlaybackLoop();
+            }}
+            on:ended={() => {
+              syncVideoPlaybackState();
+              stopPlaybackLoop();
+            }}
             on:loadedmetadata={() => {
               duration = player?.duration ?? 0;
+              syncVideoPlaybackState();
               if (player && pendingSeekRatio !== null && duration > 0) {
                 player.currentTime = Math.min(
                   duration * pendingSeekRatio,
@@ -805,15 +1010,29 @@
                 );
                 pendingSeekRatio = null;
               }
+              if (!(player as VideoFrameCallbackCapable | null)?.requestVideoFrameCallback) {
+                renderWebGpuFrame();
+              }
+            }}
+            on:canplay={() => {
+              scheduleVideoFramePump(player);
               if (player && resumeAfterSwitch) {
                 startPlaybackLoop();
-                void player.play();
-                resumeAfterSwitch = false;
+                void resumeCurrentPlayer().finally(() => {
+                  resumeAfterSwitch = false;
+                });
+              } else {
+                switchInFlight = false;
+                syncVideoPlaybackState();
               }
             }}
             on:timeupdate={() => {
               currentTime = player?.currentTime ?? 0;
+              syncVideoPlaybackState();
               applySpeedRamp();
+              if (!(player as VideoFrameCallbackCapable | null)?.requestVideoFrameCallback) {
+                renderWebGpuFrame();
+              }
             }}
           >
             <track
@@ -828,6 +1047,17 @@
             class="w-full h-full flex items-center justify-center text-[0.65rem] text-surface-600 font-mono tracking-widest bg-surface-900"
           >
             NO SIGNAL
+          </div>
+        {/if}
+
+        {#if webGpuEngineError}
+          <div
+            class="absolute left-2 top-2 z-20 max-w-72 rounded border border-error-500/80 bg-error-500/10 px-2 py-1 text-[0.52rem] font-mono text-error-100"
+            data-testid="webgpu-engine-error"
+            title="MasterSelects-style WebGPU engine failed to initialize."
+          >
+            <div class="font-bold uppercase tracking-[0.18em]">WebGPU engine error</div>
+            <div class="normal-case tracking-normal leading-tight">{webGpuEngineError}</div>
           </div>
         {/if}
 

@@ -24,6 +24,7 @@ export interface VideoDeckAuthorityState {
   onsetSwitchTarget: number;
   switchSkipChancePercent: number;
   onsetCountForClip: number;
+  videoPlaybackActive: boolean;
   status: string;
 }
 
@@ -40,6 +41,7 @@ export const initialVideoDeckAuthorityState: VideoDeckAuthorityState = {
   onsetSwitchTarget: 4,
   switchSkipChancePercent: 0,
   onsetCountForClip: 0,
+  videoPlaybackActive: false,
   status: '',
 };
 
