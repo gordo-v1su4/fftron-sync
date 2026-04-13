@@ -11,6 +11,7 @@ import type {
 import type { EngineCueMarker } from '$lib/types/timeline';
 import type { WaveformOverview } from '$lib/audio/wav';
 import type { EssentiaFullResponse } from '$lib/services/essentia';
+import { mapRangeToNormalized } from '$lib/runtime/automationBounds';
 
 export interface TimelineSeekRequest {
   time: number;
@@ -172,13 +173,13 @@ export const essentiaAnalysis = writable<EssentiaAnalysisState>({
   updatedAtMs: null
 });
 export const automationRuntime = writable<AutomationRuntimeState>({
-  speed: 0.5,
+  speed: mapRangeToNormalized(1, 0.5, 3),
   stutter: 0
 });
 
 export const automationBounds = writable<AutomationBoundsState>({
   speedMin: 0.5,
-  speedMax: 2.1,
+  speedMax: 3,
   stutterMin: 0,
-  stutterMax: 1
+  stutterMax: 0
 });

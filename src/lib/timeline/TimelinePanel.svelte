@@ -7,10 +7,19 @@
     automationRuntime,
     essentiaAnalysis,
     markers,
+    tempoState,
     waveformOverview,
   } from "$lib/stores/runtime";
   import { buildWaveformViewportPath } from "$lib/audio/wav";
   import { buildTimelineOnsetLanes, type TimelineOnsetMarker } from "$lib/timeline/onsetMarkers";
+  import {
+    buildEssentiaPunchSpeedPresets,
+    buildSpeedLanePresets,
+    buildStutterLanePresets,
+    type CurvePoint,
+    type InterpolationMode,
+    type TrackPreset,
+  } from "$lib/timeline/externalCurvePresets";
   import {
     SPEED_AUTOMATION_DOMAIN,
     STUTTER_AUTOMATION_DOMAIN,
@@ -28,20 +37,8 @@
   export let onToggleAutoSwitch: () => void = () => {};
   export let onSetQuantizeMode: (mode: "beat" | "bar") => void = () => {};
 
-  type InterpolationMode =
-    | "linear"
-    | "smoothstep"
-    | "ease_in"
-    | "ease_out"
-    | "step";
-
-  interface CurvePoint {
-    x: number;
-    y: number;
-  }
-
   interface DragState {
-    track: "stutter" | "speed";
+    track: "speed";
     index: number;
   }
 
@@ -59,14 +56,36 @@
   const markerTagAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const zoomSteps = [1, 2, 4, 8, 16];
   const laneLabelWidthPx = 110;
+  const speedPhaseOptions = [
+    { label: "0.5x", value: 0.5 },
+    { label: "1x", value: 1 },
+    { label: "2x", value: 2 },
+    { label: "4x", value: 4 },
+    { label: "8x", value: 8 },
+    { label: "16x", value: 16 },
+  ] as const;
+  const followViewportBackstopRatio = 0.28;
+  const followViewportLeadRatio = 0.72;
+  const followViewportSnapRatio = 0.4;
   const speedDomainMin = SPEED_AUTOMATION_DOMAIN.min;
   const speedDomainMax = SPEED_AUTOMATION_DOMAIN.max;
   const stutterDomainMin = STUTTER_AUTOMATION_DOMAIN.min;
   const stutterDomainMax = STUTTER_AUTOMATION_DOMAIN.max;
   const clamp = clampValue;
+  const buildNeutralSpeedPoints = (
+    minBound = speedDomainMin,
+    maxBound = speedDomainMax,
+  ): CurvePoint[] => {
+    const neutral = mapRangeToNormalized(1, minBound, maxBound);
+    return [
+      { x: 0, y: neutral },
+      { x: 1, y: neutral },
+    ];
+  };
 
   let zoomLevel = 1;
   let followPlayhead = true;
+  let followViewportStart = 0;
   let manualViewportStart = 0;
 
   let stutterInterpolation: InterpolationMode = "smoothstep";
@@ -84,19 +103,12 @@
     { x: 1, y: 0.12 },
   ];
 
-  let speedPoints: CurvePoint[] = [
-    { x: 0, y: 0.08 },
-    { x: 0.2, y: 0.82 },
-    { x: 0.24, y: 0.06 },
-    { x: 0.48, y: 0.9 },
-    { x: 0.52, y: 0.05 },
-    { x: 0.76, y: 0.86 },
-    { x: 0.8, y: 0.07 },
-    { x: 1, y: 0.88 },
-  ];
+  let speedPoints: CurvePoint[] = buildNeutralSpeedPoints();
   let stutterPresetId = "manual";
   let speedPresetId = "manual";
   let lastAppliedPresetKey = "";
+  let lastSpeedPresetRefreshKey = "";
+  let speedPresetRefreshKey = "";
   let lastAutomationSpeed = 0.5;
   let lastAutomationStutter = 0;
   let laneMuteState: Record<TimelineLaneId, boolean> = {
@@ -132,34 +144,34 @@
     left: number;
     width: number;
   }> = [];
-  let availablePresets: AutomationPreset[] = [];
+  let generatedSpeedPresets: TrackPreset[] = [];
+  let availableSpeedPresets: TrackPreset[] = [];
+  let essentiaPunchSpeedPresets: TrackPreset[] = [];
   let essentiaPreset: AutomationPreset | null = null;
-  let visibleStutterPoints: Array<{
-    index: number;
-    point: CurvePoint;
-    localPercent: number;
-  }> = [];
+  let essentiaStutterPreset: TrackPreset | null = null;
+  let essentiaSpeedPreset: TrackPreset | null = null;
   let visibleSpeedPoints: Array<{
     index: number;
     point: CurvePoint;
     localPercent: number;
   }> = [];
   let currentSpeedValue = 0.5;
-  let currentStutterValue = 0;
   let speedMinBound = 0.5;
-  let speedMaxBound = 2.1;
+  let speedMaxBound = 3;
   let stutterMinBound = 0;
   let stutterMaxBound = 1;
   let currentSpeedRate = 1;
   let currentStutterAmount = 0;
+  let speedNeutralDisplayNorm = 0.5;
+  let timelineBpm = 120;
+  let speedPhaseMultiplier = 1;
   let normalizedAutomationBounds = {
     speedMin: 0.5,
-    speedMax: 2.1,
+    speedMax: 3,
     stutterMin: 0,
     stutterMax: 1,
   };
 
-  let stutterEditorEl: HTMLDivElement | null = null;
   let speedEditorEl: HTMLDivElement | null = null;
   let activeDrag: DragState | null = null;
 
@@ -283,6 +295,78 @@
     };
   };
 
+  const buildViewportCurveSampleXs = (
+    points: CurvePoint[],
+    viewportStartNorm: number,
+    viewportEndNorm: number,
+  ): number[] => {
+    const xs = new Set<number>();
+    const viewportSpan = Math.max(0.0001, viewportEndNorm - viewportStartNorm);
+    const denseSamples = Math.min(
+      4000,
+      Math.max(900, Math.round(900 / viewportSpan)),
+    );
+
+    for (let index = 0; index <= denseSamples; index += 1) {
+      xs.add(viewportStartNorm + viewportSpan * (index / denseSamples));
+    }
+
+    xs.add(viewportStartNorm);
+    xs.add(viewportEndNorm);
+
+    for (const point of points) {
+      if (point.x >= viewportStartNorm && point.x <= viewportEndNorm) {
+        xs.add(point.x);
+      }
+    }
+
+    return Array.from(xs).sort((left, right) => left - right);
+  };
+
+  const buildViewportStepPath = (
+    points: CurvePoint[],
+    width: number,
+    height: number,
+    viewportStartNorm: number,
+    viewportEndNorm: number,
+  ): string => {
+    const viewportSpan = Math.max(0.0001, viewportEndNorm - viewportStartNorm);
+    const safePoints = points.length
+      ? points
+      : [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ];
+    const anchors: CurvePoint[] = [
+      {
+        x: viewportStartNorm,
+        y: evaluateCurveY(safePoints, "step", viewportStartNorm),
+      },
+      ...safePoints.filter(
+        (point) => point.x > viewportStartNorm && point.x < viewportEndNorm,
+      ),
+      {
+        x: viewportEndNorm,
+        y: evaluateCurveY(safePoints, "step", viewportEndNorm),
+      },
+    ];
+
+    const first = anchors[0];
+    let line = `M 0,${height - first.y * height} `;
+
+    for (let index = 0; index < anchors.length - 1; index += 1) {
+      const current = anchors[index];
+      const next = anchors[index + 1];
+      const nextLocalNorm = (next.x - viewportStartNorm) / viewportSpan;
+      const x2 = nextLocalNorm * width;
+      const y1 = height - current.y * height;
+      const y2 = height - next.y * height;
+      line += `L ${x2},${y1} L ${x2},${y2} `;
+    }
+
+    return line;
+  };
+
   const buildViewportAutomationPaths = (
     points: CurvePoint[],
     mode: InterpolationMode,
@@ -292,13 +376,38 @@
     viewportEndNorm: number,
   ): { line: string; fill: string } => {
     const viewportSpan = Math.max(0.0001, viewportEndNorm - viewportStartNorm);
-    const samples = 240;
+    const safePoints = points.length
+      ? points
+      : [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+        ];
+
+    if (mode === "step") {
+      const line = buildViewportStepPath(
+        safePoints,
+        width,
+        height,
+        viewportStartNorm,
+        viewportEndNorm,
+      );
+      return {
+        line,
+        fill: `${line}L ${width},${height} L 0,${height} Z`,
+      };
+    }
+
+    const sampleXs = buildViewportCurveSampleXs(
+      safePoints,
+      viewportStartNorm,
+      viewportEndNorm,
+    );
     let line = "";
 
-    for (let index = 0; index <= samples; index += 1) {
-      const localNorm = index / samples;
-      const globalNorm = viewportStartNorm + localNorm * viewportSpan;
-      const yNorm = evaluateCurveY(points, mode, globalNorm);
+    for (let index = 0; index < sampleXs.length; index += 1) {
+      const globalNorm = sampleXs[index];
+      const localNorm = (globalNorm - viewportStartNorm) / viewportSpan;
+      const yNorm = evaluateCurveY(safePoints, mode, globalNorm);
       const x = localNorm * width;
       const y = height - yNorm * height;
       line += index === 0 ? `M ${x},${y} ` : `L ${x},${y} `;
@@ -462,6 +571,13 @@
     zoomLevel = clamped;
     const nextWindow = 1 / zoomLevel;
     manualViewportStart = clamp(center - nextWindow / 2, 0, 1 - nextWindow);
+    if (followPlayhead) {
+      followViewportStart = clamp(
+        center - nextWindow * followViewportSnapRatio,
+        0,
+        1 - nextWindow,
+      );
+    }
   };
 
   const setZoomAround = (nextZoom: number, anchorRatio: number) => {
@@ -469,7 +585,7 @@
     const currentWindow = 1 / zoomLevel;
     const anchor = clamp(anchorRatio, 0, 1);
     const viewportBaseStart = followPlayhead
-      ? clamp(progress / 100 - currentWindow / 2, 0, 1 - currentWindow)
+      ? followViewportStart
       : manualViewportStart;
     const anchorGlobal = viewportBaseStart + anchor * currentWindow;
 
@@ -506,6 +622,20 @@
     onSeek(clamp(currentTime + deltaSeconds, 0, safeDuration));
   };
 
+  const setFollowPlayheadEnabled = (enabled: boolean) => {
+    if (enabled) {
+      followViewportStart = clamp(
+        progress / 100 - viewportWindow * followViewportSnapRatio,
+        0,
+        1 - viewportWindow,
+      );
+      followPlayhead = true;
+      return;
+    }
+    manualViewportStart = viewportStart;
+    followPlayhead = false;
+  };
+
   const handleTimelineKeydown = (event: KeyboardEvent) => {
     if (event.key === "ArrowLeft") {
       event.preventDefault();
@@ -533,7 +663,7 @@
     }
     if (event.key.toLowerCase() === "f") {
       event.preventDefault();
-      followPlayhead = !followPlayhead;
+      setFollowPlayheadEnabled(!followPlayhead);
     }
   };
 
@@ -567,20 +697,14 @@
     onSeek(value);
   };
 
-  const startCurveDrag = (
-    track: "stutter" | "speed",
-    index: number,
-    event: MouseEvent,
-  ) => {
+  const startCurveDrag = (track: "speed", index: number, event: MouseEvent) => {
     event.preventDefault();
     activeDrag = { track, index };
   };
 
   const applyDragUpdate = (event: MouseEvent) => {
     if (!activeDrag) return;
-
-    const container =
-      activeDrag.track === "stutter" ? stutterEditorEl : speedEditorEl;
+    const container = speedEditorEl;
     if (!container) return;
 
     const rect = container.getBoundingClientRect();
@@ -588,27 +712,13 @@
     const localXNorm = clamp((event.clientX - rect.left) / rect.width, 0, 1);
     const xNormRaw = clamp(viewportStart + localXNorm * viewportSpan, 0, 1);
     const displayYNorm = clamp(1 - (event.clientY - rect.top) / rect.height, 0, 1);
-    const yNorm =
-      activeDrag.track === "speed"
-        ? mapRangeToNormalized(
-            mapNormalizedToRange(displayYNorm, speedDomainMin, speedDomainMax),
-            speedMinBound,
-            speedMaxBound,
-          )
-        : mapRangeToNormalized(
-            mapNormalizedToRange(
-              displayYNorm,
-              stutterDomainMin,
-              stutterDomainMax,
-            ),
-            stutterMinBound,
-            stutterMaxBound,
-          );
+    const yNorm = mapRangeToNormalized(
+      mapNormalizedToRange(displayYNorm, speedDomainMin, speedDomainMax),
+      speedMinBound,
+      speedMaxBound,
+    );
 
-    const points =
-      activeDrag.track === "stutter"
-        ? [...stutterPoints]
-        : [...speedPoints];
+    const points = [...speedPoints];
 
     const index = activeDrag.index;
     const previous = points[index - 1];
@@ -625,13 +735,8 @@
       y: yNorm,
     };
 
-    if (activeDrag.track === "stutter") {
-      stutterPoints = points;
-      stutterPresetId = "manual";
-    } else {
-      speedPoints = points;
-      speedPresetId = "manual";
-    }
+    speedPoints = points;
+    speedPresetId = "manual";
   };
 
   const endCurveDrag = () => {
@@ -655,31 +760,19 @@
 
   const resetSpeed = () => {
     speedPresetId = "manual";
-    speedPoints = [
-      { x: 0, y: 0.08 },
-      { x: 0.2, y: 0.82 },
-      { x: 0.24, y: 0.06 },
-      { x: 0.48, y: 0.9 },
-      { x: 0.52, y: 0.05 },
-      { x: 0.76, y: 0.86 },
-      { x: 0.8, y: 0.07 },
-      { x: 1, y: 0.88 },
-    ];
+    speedPoints = buildNeutralSpeedPoints(speedMinBound, speedMaxBound);
   };
 
-  const applyPreset = (presetId: string, track: "stutter" | "speed") => {
-    const preset = availablePresets.find((entry) => entry.id === presetId);
+  const applyPreset = (presetId: string, track: "speed") => {
+    const presetList = availableSpeedPresets;
+    const preset = presetList.find((entry) => entry.id === presetId);
     if (!preset) return;
 
-    if (track === "stutter") {
-      stutterPoints = preset.stutterPoints.map((point) => ({ ...point }));
-      stutterInterpolation = preset.stutterInterpolation;
-      stutterPresetId = preset.id;
-    } else {
-      speedPoints = preset.speedPoints.map((point) => ({ ...point }));
-      speedInterpolation = preset.speedInterpolation;
-      speedPresetId = preset.id;
-    }
+    speedPoints = uniqueSortedPoints(
+      preset.points.map((point) => ({ ...point })),
+    );
+    speedInterpolation = preset.interpolation;
+    speedPresetId = preset.id;
   };
 
   const seekToSection = (sectionName: string) => {
@@ -836,13 +929,27 @@
   })();
 
   $: viewportWindow = 1 / zoomLevel;
-  $: centeredViewportStart = clamp(
-    progress / 100 - viewportWindow / 2,
-    0,
-    1 - viewportWindow,
-  );
+  $: if (followPlayhead) {
+    const maxViewportStart = Math.max(0, 1 - viewportWindow);
+    const playheadNorm = progress / 100;
+    const backstop = followViewportStart + viewportWindow * followViewportBackstopRatio;
+    const lead = followViewportStart + viewportWindow * followViewportLeadRatio;
+    if (
+      viewportWindow >= 1 ||
+      followViewportStart < 0 ||
+      followViewportStart > maxViewportStart ||
+      playheadNorm < backstop ||
+      playheadNorm > lead
+    ) {
+      followViewportStart = clamp(
+        playheadNorm - viewportWindow * followViewportSnapRatio,
+        0,
+        maxViewportStart,
+      );
+    }
+  }
   $: viewportStart = followPlayhead
-    ? centeredViewportStart
+    ? followViewportStart
     : clamp(manualViewportStart, 0, 1 - viewportWindow);
   $: viewportEnd = viewportStart + viewportWindow;
   $: playheadPosition = clamp(
@@ -931,14 +1038,6 @@
   $: speedMaxBound = normalizedAutomationBounds.speedMax;
   $: stutterMinBound = normalizedAutomationBounds.stutterMin;
   $: stutterMaxBound = normalizedAutomationBounds.stutterMax;
-  $: displayStutterPointsData = stutterPoints.map((point) => ({
-    x: point.x,
-    y: mapRangeToNormalized(
-      mapNormalizedToRange(point.y, stutterMinBound, stutterMaxBound),
-      stutterDomainMin,
-      stutterDomainMax,
-    ),
-  }));
   $: displaySpeedPointsData = speedPoints.map((point) => ({
     x: point.x,
     y: mapRangeToNormalized(
@@ -948,14 +1047,6 @@
     ),
   }));
 
-  $: stutterPaths = buildViewportAutomationPaths(
-    displayStutterPointsData,
-    stutterInterpolation,
-    1000,
-    100,
-    viewportStart,
-    viewportEnd,
-  );
   $: speedRampPaths = buildViewportAutomationPaths(
     displaySpeedPointsData,
     speedInterpolation,
@@ -964,21 +1055,64 @@
     viewportStart,
     viewportEnd,
   );
-  $: visibleStutterPoints = clipPointsToViewport(
-    displayStutterPointsData,
-    viewportStart,
-    viewportEnd,
+  $: speedNeutralDisplayNorm = mapRangeToNormalized(
+    1,
+    speedDomainMin,
+    speedDomainMax,
   );
-  $: visibleSpeedPoints = clipPointsToViewport(
-    displaySpeedPointsData,
-    viewportStart,
-    viewportEnd,
-  );
+  $: timelineBpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
+  $: visibleSpeedPoints = speedPresetId === "manual"
+    ? clipPointsToViewport(
+        displaySpeedPointsData,
+        viewportStart,
+        viewportEnd,
+      )
+    : [];
 
   $: essentiaPreset = createEssentiaPreset();
-  $: availablePresets = [
-    ...createBuiltInPresets(),
-    ...(essentiaPreset ? [essentiaPreset] : []),
+  $: essentiaStutterPreset = essentiaPreset
+    ? {
+        id: essentiaPreset.id,
+        name: essentiaPreset.name,
+        points: essentiaPreset.stutterPoints,
+        interpolation: essentiaPreset.stutterInterpolation,
+      }
+    : null;
+  $: essentiaSpeedPreset = essentiaPreset
+    ? {
+        id: essentiaPreset.id,
+        name: essentiaPreset.name,
+        points: essentiaPreset.speedPoints,
+        interpolation: essentiaPreset.speedInterpolation,
+      }
+    : null;
+  $: essentiaPunchSpeedPresets = buildEssentiaPunchSpeedPresets({
+    full: $essentiaAnalysis.full,
+    durationSeconds: safeDuration,
+    bpm: timelineBpm,
+    speedMinBound,
+    speedMaxBound,
+    phaseMultiplier: speedPhaseMultiplier,
+  });
+  $: generatedSpeedPresets = [
+    ...essentiaPunchSpeedPresets,
+    ...buildSpeedLanePresets(
+      safeDuration,
+      timelineBpm,
+      speedMinBound,
+      speedMaxBound,
+      speedPhaseMultiplier,
+    ),
+    ...(essentiaSpeedPreset ? [essentiaSpeedPreset] : []),
+  ];
+  $: availableSpeedPresets = [
+    {
+      id: "manual",
+      name: "Manual",
+      points: speedPoints,
+      interpolation: speedInterpolation,
+    },
+    ...generatedSpeedPresets,
   ];
   $: analysisPresetKey = String($essentiaAnalysis.updatedAtMs ?? "");
   $: if (analysisPresetKey && analysisPresetKey !== lastAppliedPresetKey) {
@@ -992,6 +1126,26 @@
       speedPresetId = essentiaPreset.id;
     }
   }
+  $: speedPresetRefreshKey = [
+    speedPresetId,
+    speedPhaseMultiplier,
+    timelineBpm.toFixed(2),
+    safeDuration.toFixed(3),
+    analysisPresetKey,
+  ].join("|");
+  $: if (
+    speedPresetId !== "manual" &&
+    speedPresetRefreshKey !== lastSpeedPresetRefreshKey
+  ) {
+    const selectedSpeedPreset = generatedSpeedPresets.find(
+      (preset) => preset.id === speedPresetId,
+    );
+    if (selectedSpeedPreset) {
+      lastSpeedPresetRefreshKey = speedPresetRefreshKey;
+      speedPoints = selectedSpeedPreset.points.map((point) => ({ ...point }));
+      speedInterpolation = selectedSpeedPreset.interpolation;
+    }
+  }
 
   $: normalizedPlayhead = clampValue(currentTime / safeDuration, 0, 1);
   $: currentSpeedValue = evaluateCurveY(
@@ -999,32 +1153,18 @@
     speedInterpolation,
     normalizedPlayhead,
   );
-  $: currentStutterValue = evaluateCurveY(
-    stutterPoints,
-    stutterInterpolation,
-    normalizedPlayhead,
-  );
   $: waveformLaneActive = laneSoloState === null
     ? !laneMuteState.waveform
     : laneSoloState === "waveform";
-  $: stutterLaneActive = laneSoloState === null
-    ? !laneMuteState.stutter
-    : laneSoloState === "stutter";
+  $: stutterLaneActive = false;
   $: speedLaneActive = laneSoloState === null
     ? !laneMuteState.speed
     : laneSoloState === "speed";
   $: neutralSpeedNorm = mapRangeToNormalized(1, speedMinBound, speedMaxBound);
-  $: neutralStutterNorm = mapRangeToNormalized(
-    0,
-    stutterMinBound,
-    stutterMaxBound,
-  );
   $: effectiveSpeedAutomationValue = speedLaneActive
     ? currentSpeedValue
     : neutralSpeedNorm;
-  $: effectiveStutterAutomationValue = stutterLaneActive
-    ? currentStutterValue
-    : neutralStutterNorm;
+  $: effectiveStutterAutomationValue = 0;
   $: currentSpeedRate = mapNormalizedToRange(
     effectiveSpeedAutomationValue,
     speedMinBound,
@@ -1140,9 +1280,7 @@
           class="px-2 py-0.5 text-[0.55rem] border-x border-surface-800 {followPlayhead
             ? 'text-primary-300 bg-primary-500/10'
             : 'text-surface-400'}"
-          on:click={() => {
-            followPlayhead = !followPlayhead;
-          }}
+          on:click={() => setFollowPlayheadEnabled(!followPlayhead)}
         >
           Follow
         </button>
@@ -1354,109 +1492,7 @@
       </div>
     </div>
 
-    <div class="flex-[1_1_0%] min-h-0 flex border-b border-surface-800 items-stretch bg-surface-900 {stutterLaneActive
-      ? ''
-      : 'opacity-45'}">
-      <div
-        class="w-[110px] flex-none bg-surface-900 border-r border-surface-800 flex flex-col justify-center gap-1 px-2 z-20"
-      >
-        <span
-          class="text-[0.6rem] text-surface-300 uppercase font-bold tracking-widest"
-          >STUTTER</span
-        >
-        <span class="text-[0.5rem] text-surface-500">Envelope Lane</span>
-        <div class="flex gap-1">
-          <button
-            class="h-4 w-4 rounded-[2px] text-[0.5rem] font-black border {laneSoloState ===
-            'stutter'
-              ? 'border-primary-500 text-primary-300 bg-primary-500/15'
-              : 'border-surface-700 text-surface-500 hover:bg-surface-800'}"
-            aria-label="Solo stutter lane"
-            aria-pressed={laneSoloState === "stutter"}
-            on:click={() => toggleLaneSolo("stutter")}>S</button
-          >
-          <button
-            class="h-4 w-4 rounded-[2px] text-[0.5rem] font-black border {laneMuteState.stutter
-              ? 'border-error-500 text-error-400 bg-error-500/10'
-              : 'border-surface-700 text-surface-500 hover:bg-surface-800'}"
-            aria-label="Mute stutter lane"
-            aria-pressed={laneMuteState.stutter}
-            on:click={() => toggleLaneMute("stutter")}>M</button
-          >
-        </div>
-      </div>
-      <div class="flex-1 relative overflow-hidden bg-surface-950" bind:this={stutterEditorEl}>
-        <div class="absolute top-1 right-1 z-20 flex gap-1 items-center">
-          <select
-            bind:value={stutterPresetId}
-            on:change={(event) =>
-              applyPreset(
-                (event.currentTarget as HTMLSelectElement).value,
-                "stutter",
-              )}
-            disabled={!stutterLaneActive}
-            class="h-5 bg-surface-900 border border-surface-700 text-[0.52rem] text-surface-300 rounded-sm px-1"
-          >
-            {#each availablePresets as preset}
-              <option value={preset.id}>{preset.name}</option>
-            {/each}
-          </select>
-          <select
-            bind:value={stutterInterpolation}
-            on:change={() => (stutterPresetId = "manual")}
-            disabled={!stutterLaneActive}
-            class="h-5 bg-surface-900 border border-surface-700 text-[0.52rem] text-surface-300 rounded-sm px-1"
-          >
-            <option value="linear">linear</option>
-            <option value="smoothstep">smooth</option>
-            <option value="ease_in">ease in</option>
-            <option value="ease_out">ease out</option>
-            <option value="step">step</option>
-          </select>
-          <button
-            class="h-5 px-1.5 text-[0.52rem] border border-primary-500 text-primary-300 bg-primary-500/10 rounded-sm disabled:opacity-40"
-            disabled={!stutterLaneActive}
-            on:click={resetStutter}>Reset</button
-          >
-        </div>
-
-        <svg
-          preserveAspectRatio="none"
-          viewBox="0 0 1000 100"
-          class="w-full h-full absolute inset-0"
-        >
-          <defs>
-            <linearGradient id="stutterFillGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.46" />
-              <stop offset="100%" stop-color="#fbbf24" stop-opacity="0.04" />
-            </linearGradient>
-          </defs>
-          <path d={stutterPaths.fill} fill="url(#stutterFillGradient)" />
-          <path
-            d={stutterPaths.line}
-            fill="none"
-            stroke="#fcd34d"
-            stroke-width="1.8"
-            stroke-linejoin="round"
-            stroke-linecap="round"
-          />
-        </svg>
-
-        {#if stutterLaneActive}
-          {#each visibleStutterPoints as entry}
-            <button
-              aria-label={`Adjust stutter control point ${entry.index + 1}`}
-              class="absolute z-20 w-2.5 h-2.5 rounded-full border border-primary-200 bg-primary-500 hover:scale-110"
-              style={`left:calc(${entry.localPercent}% - 5px); top:calc(${(1 - entry.point.y) * 100}% - 5px);`}
-              on:mousedown={(event) =>
-                startCurveDrag("stutter", entry.index, event)}
-            ></button>
-          {/each}
-        {/if}
-      </div>
-    </div>
-
-    <div class="flex-[1_1_0%] min-h-0 flex items-stretch bg-surface-900 {speedLaneActive
+    <div class="flex-[2_2_0%] min-h-0 flex items-stretch bg-surface-900 {speedLaneActive
       ? ''
       : 'opacity-45'}">
       <div
@@ -1488,6 +1524,26 @@
         </div>
       </div>
       <div class="flex-1 relative overflow-hidden bg-surface-950" bind:this={speedEditorEl}>
+        <div
+          class="absolute inset-0 pointer-events-none opacity-35"
+          style="background-image: linear-gradient(to right, rgba(251,191,36,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(251,191,36,0.05) 1px, transparent 1px); background-size: 22px 18px;"
+        ></div>
+        <div
+          class="absolute inset-x-0 z-0 border-t border-dashed border-primary-300/35 pointer-events-none"
+          style={`top:${(1 - speedNeutralDisplayNorm) * 100}%`}
+        ></div>
+        <div class="absolute left-2 top-1 z-10 pointer-events-none rounded-sm bg-surface-950/80 px-1 py-[1px] text-[0.52rem] font-mono text-surface-300">
+          {speedMaxBound.toFixed(2)}x
+        </div>
+        <div
+          class="absolute left-2 z-10 pointer-events-none rounded-sm bg-surface-950/80 px-1 py-[1px] text-[0.5rem] font-mono text-primary-200"
+          style={`top:calc(${(1 - speedNeutralDisplayNorm) * 100}% - 10px);`}
+        >
+          1.00x
+        </div>
+        <div class="absolute bottom-1 left-2 z-10 pointer-events-none rounded-sm bg-surface-950/80 px-1 py-[1px] text-[0.52rem] font-mono text-surface-400">
+          {speedMinBound.toFixed(2)}x
+        </div>
         <div class="absolute top-1 right-1 z-20 flex gap-1 items-center">
           <select
             bind:value={speedPresetId}
@@ -1499,8 +1555,19 @@
             disabled={!speedLaneActive}
             class="h-5 bg-surface-900 border border-surface-700 text-[0.52rem] text-surface-300 rounded-sm px-1"
           >
-            {#each availablePresets as preset}
+            {#each availableSpeedPresets as preset}
               <option value={preset.id}>{preset.name}</option>
+            {/each}
+          </select>
+          <select
+            bind:value={speedPhaseMultiplier}
+            disabled={!speedLaneActive}
+            class="h-5 bg-surface-900 border border-surface-700 text-[0.52rem] text-surface-300 rounded-sm px-1"
+            title="Anchor frequency"
+            aria-label="Preset anchor frequency"
+          >
+            {#each speedPhaseOptions as option}
+              <option value={option.value}>{option.label}</option>
             {/each}
           </select>
           <select
@@ -1529,16 +1596,35 @@
         >
           <defs>
             <linearGradient id="speedFillGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.38" />
-              <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.06" />
+              <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.46" />
+              <stop offset="58%" stop-color="#f59e0b" stop-opacity="0.17" />
+              <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.04" />
             </linearGradient>
           </defs>
           <path d={speedRampPaths.fill} fill="url(#speedFillGradient)" />
           <path
             d={speedRampPaths.line}
             fill="none"
+            stroke="#f97316"
+            stroke-opacity="0.16"
+            stroke-width="1.6"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          />
+          <path
+            d={speedRampPaths.line}
+            fill="none"
             stroke="#fbbf24"
-            stroke-width="1.8"
+            stroke-width="0.9"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          />
+          <path
+            d={speedRampPaths.line}
+            fill="none"
+            stroke="#ffedd5"
+            stroke-opacity="0.5"
+            stroke-width="0.28"
             stroke-linejoin="round"
             stroke-linecap="round"
           />
@@ -1548,8 +1634,8 @@
           {#each visibleSpeedPoints as entry}
             <button
               aria-label={`Adjust speed control point ${entry.index + 1}`}
-              class="absolute z-20 w-2.5 h-2.5 rounded-full border border-primary-200 bg-primary-500 hover:scale-110"
-              style={`left:calc(${entry.localPercent}% - 5px); top:calc(${(1 - entry.point.y) * 100}% - 5px);`}
+              class="absolute z-20 h-[6px] w-[6px] rounded-full border border-primary-200/80 bg-primary-400 hover:scale-110"
+              style={`left:calc(${entry.localPercent}% - 3px); top:calc(${(1 - entry.point.y) * 100}% - 3px);`}
               on:mousedown={(event) => startCurveDrag("speed", entry.index, event)}
             ></button>
           {/each}

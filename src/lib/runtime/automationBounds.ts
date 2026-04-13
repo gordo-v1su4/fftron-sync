@@ -11,8 +11,8 @@ interface NumericDomain {
 }
 
 export const SPEED_AUTOMATION_DOMAIN: NumericDomain = {
-  min: 0.25,
-  max: 4,
+  min: 0.5,
+  max: 3,
 };
 
 export const STUTTER_AUTOMATION_DOMAIN: NumericDomain = {
@@ -74,7 +74,7 @@ export const normalizeAutomationBounds = (
     bounds.stutterMin,
     bounds.stutterMax,
     STUTTER_AUTOMATION_DOMAIN,
-    0.001,
+    0,
   );
 
   return {

@@ -13,15 +13,15 @@ describe('automation bounds helpers', () => {
     expect(
       normalizeAutomationBounds({
         speedMin: 0.5,
-        speedMax: 2.1,
+        speedMax: 3,
         stutterMin: 0,
-        stutterMax: 1,
+        stutterMax: 0,
       }),
     ).toEqual({
       speedMin: 0.5,
-      speedMax: 2.1,
+      speedMax: 3,
       stutterMin: 0,
-      stutterMax: 1,
+      stutterMax: 0,
     });
   });
 
@@ -34,16 +34,16 @@ describe('automation bounds helpers', () => {
         stutterMax: -1,
       }),
     ).toEqual({
-      speedMin: 0.25,
-      speedMax: 0.26,
+      speedMin: 0.5,
+      speedMax: 0.51,
       stutterMin: 0,
-      stutterMax: 0.001,
+      stutterMax: 0,
     });
   });
 
   it('round-trips normalized values through the speed range helpers', () => {
-    const speed = mapNormalizedToRange(0.37, 0.5, 2.1);
-    expect(mapRangeToNormalized(speed, 0.5, 2.1)).toBeCloseTo(0.37, 6);
+    const speed = mapNormalizedToRange(0.37, 0.5, 3);
+    expect(mapRangeToNormalized(speed, 0.5, 3)).toBeCloseTo(0.37, 6);
   });
 
   it('clamps out-of-range normalized values before mapping', () => {

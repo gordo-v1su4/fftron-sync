@@ -55,17 +55,18 @@
   let selectedTimeShapePresetId = "stutter-1-8";
   let timeShaperMix = 0.82;
   let timeShaperDepth = 0.86;
+  let timeShaperCooldownMs = 950;
   let timeShaperStatus = "TimeShaper armed";
   let timeShaperLastAppliedMs = 0;
   let timeShaperLastTriggeredAtMs: number | null = null;
+  let timeShaperActiveUntilMs = 0;
+  let timeShaperNextTriggerAllowedAtMs = 0;
   let switchSkipChancePercent = 0;
   let onsetSwitchTarget = 4;
   let onsetCountForClip = 0;
   const maxOnsetDots = 8;
   let currentPlaybackRate = 1;
   let currentAutomationRate = 1;
-  let currentAutomationStutter = 0;
-  let lastStutterPulseMs = 0;
   let playbackRafId = 0;
   let pendingSeekRatio: number | null = null;
   let resumeAfterSwitch = false;
@@ -653,6 +654,32 @@
     return Math.max(0, (Date.now() - $tempoState.downbeatEpochMs) / 1000 / (60 / bpm));
   };
 
+  const getTimeShaperTriggerWindow = (secondsPerBeat: number) => {
+    const cycleWindowMs = Math.max(
+      180,
+      currentTimeShapePreset.cycleBeats * secondsPerBeat * 1000,
+    );
+    const repeatWindowMs = Math.max(
+      120,
+      (currentTimeShapePreset.repeatWindowBeats ?? currentTimeShapePreset.cycleBeats) *
+        secondsPerBeat *
+        1000,
+    );
+    const latchMs = currentTimeShapePreset.playbackMode === "stutterRepeat"
+      ? Math.max(cycleWindowMs * 0.9, repeatWindowMs * 2.4)
+      : cycleWindowMs * 0.92;
+    const cooldownMs = currentTimeShapePreset.playbackMode === "stutterRepeat"
+      ? Math.max(cycleWindowMs, repeatWindowMs * 2.8)
+      : Math.max(cycleWindowMs * 1.05, 320);
+
+    return {
+      latchMs: Math.round(clampValue(latchMs, 180, 2600)),
+      cooldownMs: Math.round(
+        clampValue(timeShaperCooldownMs || cooldownMs, 220, 3200),
+      ),
+    };
+  };
+
   const applyTimeShaper = () => {
     if (!player || player.paused || !timeShaperEnabled || !duration || duration <= 0) {
       timeShaperStatus = timeShaperEnabled ? "TimeShaper waiting" : "TimeShaper bypassed";
@@ -660,6 +687,9 @@
     }
 
     const now = Date.now();
+    const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
+    const secondsPerBeat = 60 / bpm;
+    const triggerWindow = getTimeShaperTriggerWindow(secondsPerBeat);
     const audioTrigger = evaluateAudioTrigger(
       {
         enabled: true,
@@ -674,20 +704,30 @@
       now,
     );
 
-    if (audioTrigger.status === "triggered") timeShaperLastTriggeredAtMs = now;
+    const cooldownBlocked = now < timeShaperNextTriggerAllowedAtMs;
+    const triggeredNow = audioTrigger.status === "triggered" && !cooldownBlocked;
+    if (triggeredNow) {
+      timeShaperLastTriggeredAtMs = now;
+      timeShaperActiveUntilMs = now + triggerWindow.latchMs;
+      timeShaperNextTriggerAllowedAtMs = now + triggerWindow.cooldownMs;
+    }
 
     const triggerActive =
-      audioTrigger.status === "triggered" ||
-      $audioBands.envelopeA > $reactiveEnvelope.threshold ||
+      triggeredNow ||
+      now < timeShaperActiveUntilMs ||
       currentTimeShapePreset.id === "half-time";
 
     if (!triggerActive) {
-      timeShaperStatus = `TS armed · FX ${timeShaperTriggerLabel} · ${audioTrigger.score.toFixed(2)}`;
+      const cooldownSeconds = Math.max(
+        0,
+        (timeShaperNextTriggerAllowedAtMs - now) / 1000,
+      );
+      timeShaperStatus = cooldownBlocked
+        ? `TS cooling ${cooldownSeconds.toFixed(1)}s · FX ${timeShaperTriggerLabel}`
+        : `TS armed · FX ${timeShaperTriggerLabel} · ${audioTrigger.score.toFixed(2)}`;
       return;
     }
 
-    const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
-    const secondsPerBeat = 60 / bpm;
     const result = applyVideoTimeShape({
       normalSourceTimeSeconds: player.currentTime || 0,
       beatPosition: getBeatPosition(),
@@ -711,58 +751,42 @@
       timeShaperLastAppliedMs = now;
     }
 
-    const shapedRate = Math.max(0.5, Math.min(speedDomainMax, Math.abs(result.playbackRate || 1)));
-    player.playbackRate = Math.max(0.25, Math.min(speedDomainMax, player.playbackRate * 0.75 + shapedRate * 0.25));
-    currentPlaybackRate = player.playbackRate;
+    const basePlaybackRate = Math.max(0.25, Math.min(speedDomainMax, currentPlaybackRate || 1));
+    const rawShapedRate = Math.max(
+      0.5,
+      Math.min(speedDomainMax, Math.abs(result.playbackRate || 1)),
+    );
+    const tsTargetRate = Math.max(
+      0.25,
+      Math.min(speedDomainMax, basePlaybackRate * rawShapedRate),
+    );
+    const mixedRate =
+      basePlaybackRate + (tsTargetRate - basePlaybackRate) * result.mixAmount;
+    player.playbackRate = mixedRate;
+    currentPlaybackRate = mixedRate;
     timeShaperStatus = `${currentTimeShapePreset.shortLabel} · ${(result.mixAmount * 100).toFixed(0)}% · ${result.metadata.playbackMode}`;
   };
 
   const applySpeedRamp = () => {
     if (!player || player.paused) return;
-    const envelope = Math.max(0, Math.min(1, $audioBands.envelopeB));
     const automationSpeedNorm = Math.max(
       0,
       Math.min(1, $automationRuntime.speed),
     );
-    const automationStutterNorm = Math.max(
-      0,
-      Math.min(1, $automationRuntime.stutter),
-    );
     const normalizedAutomationBounds = normalizeAutomationBounds($automationBounds);
     const speedMinBound = normalizedAutomationBounds.speedMin;
     const speedMaxBound = normalizedAutomationBounds.speedMax;
-    const stutterMinBound = normalizedAutomationBounds.stutterMin;
-    const stutterMaxBound = normalizedAutomationBounds.stutterMax;
-    const rampDepth = quantizeMode === "bar" ? 0.45 : 0.28;
     const automationRate = mapNormalizedToRange(
       automationSpeedNorm,
       speedMinBound,
       speedMaxBound,
     );
-    const automationStutterAmount = mapNormalizedToRange(
-      automationStutterNorm,
-      stutterMinBound,
-      stutterMaxBound,
-    );
     currentAutomationRate = automationRate;
-    currentAutomationStutter = automationStutterAmount;
-    const envelopeRate =
-      1 + (envelope - 0.5) * 2 * rampDepth;
     const targetRate = speedRampEnabled
-      ? Math.max(speedDomainMin, Math.min(speedDomainMax, automationRate * envelopeRate))
+      ? Math.max(speedDomainMin, Math.min(speedDomainMax, automationRate))
       : 1;
     currentPlaybackRate = targetRate;
     player.playbackRate = targetRate;
-
-    if (speedRampEnabled && automationStutterAmount > 0.72) {
-      const now = Date.now();
-      const pulseEveryMs = Math.max(55, 185 - automationStutterAmount * 120);
-      if (now - lastStutterPulseMs >= pulseEveryMs && player.currentTime > 0.06) {
-        const jumpBack = 0.012 + automationStutterAmount * 0.065;
-        player.currentTime = Math.max(0, player.currentTime - jumpBack);
-        lastStutterPulseMs = now;
-      }
-    }
   };
 
   const stopPlaybackLoop = () => {
@@ -804,7 +828,6 @@
       return;
     }
     applySpeedRamp();
-    lastStutterPulseMs = Date.now();
     startPlaybackLoop();
     await resumeCurrentPlayer();
     uiStatus = `Playing ${currentClip?.name ?? "clip"}`;
@@ -817,8 +840,10 @@
     syncVideoPlaybackState();
     if (player) player.playbackRate = 1;
     currentPlaybackRate = 1;
-    lastStutterPulseMs = 0;
     timeShaperLastAppliedMs = 0;
+    timeShaperLastTriggeredAtMs = null;
+    timeShaperActiveUntilMs = 0;
+    timeShaperNextTriggerAllowedAtMs = 0;
     uiStatus = "Paused";
   };
 
@@ -831,8 +856,10 @@
     player.currentTime = 0;
     player.playbackRate = 1;
     currentPlaybackRate = 1;
-    lastStutterPulseMs = 0;
     timeShaperLastAppliedMs = 0;
+    timeShaperLastTriggeredAtMs = null;
+    timeShaperActiveUntilMs = 0;
+    timeShaperNextTriggerAllowedAtMs = 0;
     currentTime = 0;
     uiStatus = "Stopped";
   };
@@ -1094,7 +1121,7 @@
             class="text-[0.55rem] px-1 py-0.5 bg-surface-950/60 border border-surface-700/80 rounded-sm font-mono backdrop-blur-sm"
             >{$activeSection} · {currentPlaybackRate.toFixed(2)}x · S{
               currentAutomationRate.toFixed(2)
-            }x · T{(currentAutomationStutter * 100).toFixed(0)}%</span
+            }x</span
           >
         </div>
 
@@ -1216,6 +1243,9 @@
                 title="Toggle video TimeShaper. When enabled, the selected preset can stutter, scratch, reverse, or drag the current clip's source time."
                 on:click={() => {
                   timeShaperEnabled = !timeShaperEnabled;
+                  timeShaperLastTriggeredAtMs = null;
+                  timeShaperActiveUntilMs = 0;
+                  timeShaperNextTriggerAllowedAtMs = 0;
                   if (!timeShaperEnabled) timeShaperStatus = "TimeShaper bypassed";
                 }}
               >
@@ -1262,8 +1292,26 @@
                 bind:value={timeShaperMix}
                 class="w-14 h-1 accent-primary-500"
                 aria-label="TimeShaper mix amount"
-                title="Dry/wet amount for video time remapping. 0 keeps normal playback; 1 applies the full preset curve."
+                title="Dry/wet amount for TimeShaper. 0 keeps the base playback/ramp behavior, while 1 applies the full source-time and playback-rate modulation for the selected preset."
               />
+              <label for="timeshaper-cooldown" class="text-[0.52rem] text-surface-400 uppercase font-bold">Cool</label>
+              <input
+                id="timeshaper-cooldown"
+                type="range"
+                min="220"
+                max="3200"
+                step="20"
+                bind:value={timeShaperCooldownMs}
+                class="w-14 h-1 accent-primary-500"
+                aria-label="TimeShaper cooldown"
+                title="Minimum wait before TimeShaper can retrigger again after a punch."
+              />
+              <span
+                class="rounded-sm border border-surface-700 bg-surface-950 px-1 py-0.5 text-[0.52rem] font-mono text-surface-300"
+                title="TimeShaper cooldown seconds"
+              >
+                {(timeShaperCooldownMs / 1000).toFixed(2)}s
+              </span>
               <div
                 class="rounded-sm border border-surface-700 bg-surface-950 px-1.5 py-0.5 text-[0.56rem] font-mono text-primary-200"
                 aria-label="TimeShaper trigger range"
@@ -1329,7 +1377,7 @@
               class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {speedRampEnabled
                 ? 'border-primary-500 bg-primary-500/20 text-primary-400'
                 : 'border-surface-700 bg-surface-800 text-surface-400'}"
-              title="Toggle bottom timeline speed/stutter automation. These curves still modulate playback rate and stutter depth while TimeShaper handles source-time remapping."
+              title="Toggle bottom timeline speed automation. The visible speed lane drives the actual playback rate while TimeShaper handles source-time remapping."
               on:click={() => {
                 speedRampEnabled = !speedRampEnabled;
                 if (!speedRampEnabled && player) {

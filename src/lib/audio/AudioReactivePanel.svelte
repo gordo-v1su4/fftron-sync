@@ -62,7 +62,7 @@
   const waveformResolution = 4096;
   const spectrumPathWidth = 640;
   const spectrumPathHeight = 136;
-  const spectrumBarCount = 48;
+  const spectrumBarCount = 96;
 
   let audioElement: HTMLAudioElement | null = null;
   let fileInput: HTMLInputElement | null = null;
@@ -93,12 +93,12 @@
   let rangeEndPercent = 100;
   let attackMs = 27;
   let releaseMs = 190;
-  let threshold = 0.12;
+  let threshold = 0.09;
   let sensitivity = 1;
   let speedMinValue = 0.5;
-  let speedMaxValue = 2.1;
+  let speedMaxValue = 3;
   let stutterMinValue = 0;
-  let stutterMaxValue = 1;
+  let stutterMaxValue = 0;
   const speedDomainMin = SPEED_AUTOMATION_DOMAIN.min;
   const speedDomainMax = SPEED_AUTOMATION_DOMAIN.max;
 
@@ -504,8 +504,8 @@
   const applyAutomationBounds = () => {
     const speedMin = clampValue(speedMinValue, speedDomainMin, speedDomainMax - 0.01);
     const speedMax = clampValue(speedMaxValue, speedMin + 0.01, speedDomainMax);
-    const stutterMin = clampValue(stutterMinValue, 0, 0.999);
-    const stutterMax = clampValue(stutterMaxValue, stutterMin + 0.001, 1);
+    const stutterMin = 0;
+    const stutterMax = 0;
 
     speedMinValue = Number(speedMin.toFixed(2));
     speedMaxValue = Number(speedMax.toFixed(2));
@@ -531,8 +531,8 @@
 
     if (!analyser) {
       analyser = context.createAnalyser();
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.42;
+      analyser.fftSize = 4096;
+      analyser.smoothingTimeConstant = 0.28;
       fftData = new Uint8Array(analyser.frequencyBinCount);
     }
 
@@ -672,8 +672,15 @@
           const start = barIndex * binSize;
           const end = Math.min(fftData!.length, start + binSize);
           let total = 0;
-          for (let index = start; index < end; index += 1) total += fftData![index];
-          return end > start ? total / ((end - start) * 255) : 0;
+          let peak = 0;
+          for (let index = start; index < end; index += 1) {
+            const normalized = fftData![index] / 255;
+            total += normalized;
+            peak = Math.max(peak, normalized);
+          }
+          if (end <= start) return 0;
+          const average = total / (end - start);
+          return clampValue(peak * 0.72 + average * 0.28, 0, 1);
         });
       }
 
@@ -1314,7 +1321,7 @@
               stroke="rgba(125,211,252,0.95)"
               stroke-linejoin="round"
               stroke-linecap="round"
-              stroke-width="4"
+              stroke-width="1.8"
             ></path>
           </svg>
           <div
@@ -1500,7 +1507,7 @@
         </div>
       </div>
       <div
-        class="grid grid-cols-[auto_52px_auto_52px_auto_52px_auto_52px] items-center gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm font-mono text-[0.58rem]"
+        class="grid grid-cols-[auto_52px_auto_52px] items-center gap-1 bg-surface-950 p-1 border border-surface-800 rounded-sm font-mono text-[0.58rem]"
       >
         <span class="text-surface-500 uppercase font-bold">SPD</span>
         <input
@@ -1523,28 +1530,6 @@
           on:input={applyAutomationBounds}
           class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
           aria-label="Speed maximum"
-        />
-        <span class="text-surface-500 uppercase font-bold">STT</span>
-        <input
-          type="number"
-          min="0"
-          max="1"
-          step="0.01"
-          bind:value={stutterMinValue}
-          on:input={applyAutomationBounds}
-          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
-          aria-label="Stutter minimum"
-        />
-        <span class="text-surface-500 uppercase font-bold">MAX</span>
-        <input
-          type="number"
-          min="0"
-          max="1"
-          step="0.01"
-          bind:value={stutterMaxValue}
-          on:input={applyAutomationBounds}
-          class="bg-surface-900 border border-surface-700 text-surface-200 px-1 py-0.5 rounded-sm text-right"
-          aria-label="Stutter maximum"
         />
       </div>
 
