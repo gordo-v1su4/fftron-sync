@@ -1,5 +1,7 @@
 # FFTRON Sync
 
+![FFTRON Sync console preview](docs/images/fftron-sync-console-preview.webp)
+
 **Reactive Auto-Editor Console.** A desktop-first live performance and synchronization engine featuring Rust clock authority, a reactive clip matrix, and quantized execution.
 
 ## 🚀 Overview
