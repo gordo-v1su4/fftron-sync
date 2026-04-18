@@ -58,6 +58,14 @@ describe('trigger event helpers', () => {
     expect(result).toMatchObject({ id: 'stream-1:evt-2', source: 'midi', note: 62 });
   });
 
+  it('applies the global trigger shift to midi events', () => {
+    const earlyResult = findActiveMidiTriggerEvent([stream()], 0.52, 0.3, 'verse', -180);
+    expect(earlyResult).toMatchObject({ id: 'stream-1:evt-1', source: 'midi', note: 60 });
+
+    const lateResult = findActiveMidiTriggerEvent([stream()], 1.05, 0.3, 'verse', 180);
+    expect(lateResult).toBeNull();
+  });
+
   it('suppresses section-locked streams outside their tagged section', () => {
     const result = findActiveMidiTriggerEvent(
       [stream({ sectionTag: 'chorus', activeOnlyInSection: true })],

@@ -48,7 +48,8 @@ export const findActiveMidiTriggerEvent = (
   streams: readonly MidiTriggerStream[],
   transportTimeSeconds: number,
   fallbackDurationSeconds: number,
-  activeSection: string
+  activeSection: string,
+  triggerShiftMs = 0
 ): TimeShaperTriggerEvent | null => {
   let winner: TimeShaperTriggerEvent | null = null;
 
@@ -59,7 +60,8 @@ export const findActiveMidiTriggerEvent = (
     }
 
     for (const event of getFilteredStreamEvents(stream)) {
-      const adjustedStartSeconds = event.startSeconds + stream.offsetMs / 1000;
+      const adjustedStartSeconds =
+        event.startSeconds + stream.offsetMs / 1000 + triggerShiftMs / 1000;
       const durationSeconds = Math.max(fallbackDurationSeconds, event.durationSeconds);
       if (transportTimeSeconds < adjustedStartSeconds || transportTimeSeconds > adjustedStartSeconds + durationSeconds) {
         continue;

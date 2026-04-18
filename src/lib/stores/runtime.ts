@@ -190,8 +190,14 @@ export const automationBounds = writable<AutomationBoundsState>({
   stutterMax: 0
 });
 
+export type TimelineMarkerMode = 'onsets' | 'midi' | 'both';
+
 export const midiTriggerStreams = writable<MidiTriggerStream[]>([]);
 export const timeShaperTriggerSource = writable<TimeShaperTriggerSource>('audio');
 export const timeShaperEnvelopePresetId = writable<TimeShaperEnvelopePresetId>('easy_ease');
 export const timeShaperTriggerShiftMs = writable<number>(0);
 export const timeShaperRecentEvents = writable<TimeShaperTriggerEvent[]>([]);
+
+export const timelineMarkerMode = writable<TimelineMarkerMode>('both');
+export const onsetMarkerDensity = writable<number>(0.45);
+export const timelineShowSpeedLane = writable<boolean>(true);

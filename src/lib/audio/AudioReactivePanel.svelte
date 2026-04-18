@@ -126,6 +126,23 @@
   });
   let onsetDetectionState: "waiting" | "ready" | "error" = "waiting";
 
+  const sampleEnergyAtTime = (
+    curve: number[] | null | undefined,
+    durationSeconds: number,
+    timeSeconds: number,
+  ): number => {
+    if (!curve?.length || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return 1;
+    }
+
+    const clampedTime = clampValue(timeSeconds, 0, durationSeconds);
+    const index = Math.min(
+      curve.length - 1,
+      Math.max(0, Math.round((clampedTime / durationSeconds) * (curve.length - 1))),
+    );
+    return clampValue(curve[index] ?? 1, 0.05, 1);
+  };
+
   const normalizeSectionLabel = (label: string): string => {
     const clean = label
       .trim()
@@ -930,16 +947,19 @@
       });
       const sectionCounts = new Map<string, number>();
       audioOnsets.set(
-        full.onsets.map((onset, index) => ({
-          id: `ess-onset-${index}`,
-          timestampMs: Date.now(),
-          timeSeconds: Math.max(0, onset),
-          band: "full" as const,
-          value: 1,
-          threshold: 0,
-          counted: false,
-          source: "essentia" as const,
-        })),
+        full.onsets.map((onset, index) => {
+          const timeSeconds = Math.max(0, onset);
+          return {
+            id: `ess-onset-${index}`,
+            timestampMs: Date.now(),
+            timeSeconds,
+            band: "full" as const,
+            value: sampleEnergyAtTime(full.energy.curve ?? [], full.duration, timeSeconds),
+            threshold: 0,
+            counted: false,
+            source: "essentia" as const,
+          };
+        }),
       );
 
       essentiaAnalysis.set({

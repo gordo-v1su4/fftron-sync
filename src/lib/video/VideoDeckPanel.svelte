@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import {
     applyVideoTimeShape,
+    composePlaybackEffects,
     evaluateAudioTrigger,
     findTimeShapeGesturePreset,
     findTimeShaperEnvelopePreset,
@@ -76,6 +77,8 @@
   let timeShaperAudioTriggerStartSeconds: number | null = null;
   let timeShaperAudioTriggerId = "";
   let lastLoggedTimeShaperEventId = "";
+  let timeShaperPanelCollapsed = true;
+  let timeShaperPanelTab: "presets" | "triggers" = "presets";
   let switchSkipChancePercent = 0;
   let onsetSwitchTarget = 4;
   let onsetCountForClip = 0;
@@ -611,6 +614,7 @@
       getTransportTimeSeconds(),
       defaultDurationSeconds,
       $activeSection,
+      $timeShaperTriggerShiftMs,
     );
     const activeAudioEvent = buildAudioTriggerEvent(
       getTransportTimeSeconds(),
@@ -669,12 +673,14 @@
         timeShaperLastAppliedMs = now;
       }
 
-      const fallbackBasePlaybackRate = Math.max(0.25, Math.min(speedDomainMax, currentPlaybackRate || 1));
-      const fallbackRawShapedRate = Math.max(0.5, Math.min(speedDomainMax, Math.abs(fallbackResult.playbackRate || 1)));
-      const fallbackTargetRate = Math.max(0.25, Math.min(speedDomainMax, fallbackBasePlaybackRate * fallbackRawShapedRate));
-      const fallbackMixedRate = fallbackBasePlaybackRate + (fallbackTargetRate - fallbackBasePlaybackRate) * fallbackResult.mixAmount;
-      player.playbackRate = fallbackMixedRate;
-      currentPlaybackRate = fallbackMixedRate;
+      const fallbackPlayback = composePlaybackEffects({
+        automationPlaybackRate: currentAutomationRate || 1,
+        timeShaperPlaybackRate: fallbackResult.playbackRate || 1,
+        mixAmount: fallbackResult.mixAmount,
+        maxPlaybackRate: speedDomainMax,
+      });
+      player.playbackRate = fallbackPlayback.playbackRate;
+      currentPlaybackRate = fallbackPlayback.playbackRate;
       timeShaperStatus = `${currentTimeShapePreset.shortLabel} · continuous fallback · ${fallbackResult.metadata.playbackMode}`;
       return;
     }
@@ -709,12 +715,14 @@
       timeShaperLastAppliedMs = now;
     }
 
-    const basePlaybackRate = Math.max(0.25, Math.min(speedDomainMax, currentPlaybackRate || 1));
-    const rawShapedRate = Math.max(0.5, Math.min(speedDomainMax, Math.abs(result.playbackRate || 1)));
-    const tsTargetRate = Math.max(0.25, Math.min(speedDomainMax, basePlaybackRate * rawShapedRate));
-    const mixedRate = basePlaybackRate + (tsTargetRate - basePlaybackRate) * result.mixAmount;
-    player.playbackRate = mixedRate;
-    currentPlaybackRate = mixedRate;
+    const composedPlayback = composePlaybackEffects({
+      automationPlaybackRate: currentAutomationRate || 1,
+      timeShaperPlaybackRate: result.playbackRate || 1,
+      mixAmount: result.mixAmount,
+      maxPlaybackRate: speedDomainMax,
+    });
+    player.playbackRate = composedPlayback.playbackRate;
+    currentPlaybackRate = composedPlayback.playbackRate;
     timeShaperStatus = `${activePreset.shortLabel} · ${selectedEnvelopePreset.label} · ${(result.mixAmount * 100).toFixed(0)}%`;
   };
 
@@ -1365,6 +1373,40 @@
             >
               RAMP {speedRampEnabled ? "ON" : "OFF"}
             </button>
+            <div class="flex items-center gap-1 rounded-sm border border-surface-700 bg-surface-900 px-1 py-0.5">
+              <button
+                class="px-1.5 py-0.5 text-[0.52rem] font-bold uppercase rounded-sm {timeShaperPanelTab === 'presets'
+                  ? 'bg-primary-500/20 text-primary-300'
+                  : 'text-surface-500 hover:bg-surface-800'}"
+                aria-pressed={timeShaperPanelTab === "presets"}
+                on:click={() => {
+                  timeShaperPanelTab = "presets";
+                  timeShaperPanelCollapsed = false;
+                }}
+              >
+                Presets
+              </button>
+              <button
+                class="px-1.5 py-0.5 text-[0.52rem] font-bold uppercase rounded-sm {timeShaperPanelTab === 'triggers'
+                  ? 'bg-primary-500/20 text-primary-300'
+                  : 'text-surface-500 hover:bg-surface-800'}"
+                aria-pressed={timeShaperPanelTab === "triggers"}
+                on:click={() => {
+                  timeShaperPanelTab = "triggers";
+                  timeShaperPanelCollapsed = false;
+                }}
+              >
+                Triggers
+              </button>
+              <button
+                class="px-1.5 py-0.5 text-[0.52rem] font-bold uppercase rounded-sm border border-surface-700 bg-surface-950 text-surface-300"
+                aria-expanded={!timeShaperPanelCollapsed}
+                on:click={() => (timeShaperPanelCollapsed = !timeShaperPanelCollapsed)}
+                title="Collapse this panel to give the viewer more room."
+              >
+                {timeShaperPanelCollapsed ? "Show" : "Hide"}
+              </button>
+            </div>
             <div
               class="flex items-center gap-1 px-1 py-0.5 rounded-sm border border-surface-700 bg-surface-900"
             >
@@ -1398,28 +1440,6 @@
             </div>
 	            </div>
 	          </div>
-	          <div class="absolute inset-x-2 bottom-11 z-10 flex flex-col gap-1 pointer-events-none">
-	            <TriggerEventStrip events={recentTimeShaperEvents} transportTime={transportTimeSeconds} />
-	            <div class="pointer-events-auto rounded-sm border border-surface-700 bg-surface-950/92 p-1 backdrop-blur-sm">
-	              <div class="mb-1 flex items-center justify-between gap-2">
-	                <div>
-	                  <div class="text-[0.52rem] font-bold uppercase tracking-[0.16em] text-primary-400">
-	                    Trigger Envelopes
-	                  </div>
-	                  <div class="text-[0.5rem] text-surface-500">
-	                    Visual ramp presets for event-fired TimeShaper gestures.
-	                  </div>
-	                </div>
-	                <div class="text-[0.52rem] font-mono text-surface-400">
-	                  {$timeShaperTriggerSource.toUpperCase()}
-	                </div>
-	              </div>
-	              <EnvelopePresetGallery
-	                selectedId={$timeShaperEnvelopePresetId}
-	                onSelect={(id) => $timeShaperEnvelopePresetId = id as typeof $timeShaperEnvelopePresetId}
-	              />
-	            </div>
-	          </div>
 	        {#if nextPrewarmClip}
           <video
             bind:this={prewarmPlayer}
@@ -1443,6 +1463,39 @@
           ></video>
         {/if}
       </div>
+      {#if !timeShaperPanelCollapsed}
+        <div class="mt-1 w-full rounded-sm border border-surface-800 bg-surface-950 px-2 py-1">
+          <div class="mb-1 flex items-center justify-between gap-2">
+            <div>
+              <div class="text-[0.52rem] font-bold uppercase tracking-[0.16em] text-primary-400">
+                {timeShaperPanelTab === "presets" ? "Trigger Envelopes" : "Trigger Monitor"}
+              </div>
+              <div class="text-[0.5rem] text-surface-500">
+                {timeShaperPanelTab === "presets"
+                  ? "Visual ramp presets for event-fired TimeShaper gestures."
+                  : "Recent trigger points for the active TimeShaper source."}
+              </div>
+            </div>
+            <div class="text-[0.52rem] font-mono text-surface-400">
+              {$timeShaperTriggerSource.toUpperCase()}
+            </div>
+          </div>
+
+          {#if timeShaperPanelTab === "presets"}
+            <EnvelopePresetGallery
+              selectedId={$timeShaperEnvelopePresetId}
+              onSelect={(id) => $timeShaperEnvelopePresetId = id as typeof $timeShaperEnvelopePresetId}
+            />
+          {:else}
+            <div class="flex flex-col gap-1">
+              <TriggerEventStrip events={recentTimeShaperEvents} transportTime={transportTimeSeconds} />
+              <div class="text-[0.52rem] text-surface-500">
+                Recent MIDI/audio trigger hits stay here instead of covering the viewer.
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
   </div>
 </div>
