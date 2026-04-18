@@ -57,6 +57,7 @@
   import type { EngineCueMarker } from "$lib/types/timeline";
   import type { ReactiveBandTarget } from "$lib/types/engine";
   import { getEssentiaClientApiKey } from "$lib/config/essentia-env";
+  import MidiTriggerPanel from "$lib/audio/MidiTriggerPanel.svelte";
 
   const defaultEssentiaApiKey = getEssentiaClientApiKey();
   const waveformResolution = 4096;
@@ -1122,6 +1123,8 @@
           >{essentiaLoading ? "Detecting…" : "Re-Detect BPM+Sections"}</button
         >
       </div>
+
+      <MidiTriggerPanel />
 
       <div
         class="flex items-center justify-between gap-2 rounded-sm px-1.5 py-0.5 font-mono text-[0.6rem] {onsetDetectionState === 'ready'

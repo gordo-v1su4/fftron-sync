@@ -3,9 +3,13 @@
   import {
     applyVideoTimeShape,
     evaluateAudioTrigger,
+    findTimeShapeGesturePreset,
+    findTimeShaperEnvelopePreset,
+    findActiveMidiTriggerEvent,
+    sampleEnvelopePreset,
+    shouldUseContinuousTimeShaperFallback,
+    TIME_SHAPE_GESTURE_PRESETS,
     type VideoTimeShapeCurve,
-    type VideoTimeShapePlaybackMode,
-    type VideoTimeShapeStepMode,
   } from "$lib/runtime/time-shaper";
   import {
     activeSection,
@@ -13,9 +17,14 @@
     automationBounds,
     automationRuntime,
     audioBands,
+    midiTriggerStreams,
     reactiveEnvelope,
     runtimeCapabilities,
     tempoState,
+    timeShaperEnvelopePresetId,
+    timeShaperRecentEvents,
+    timeShaperTriggerShiftMs,
+    timeShaperTriggerSource,
     transportAlignment,
   } from "$lib/stores/runtime";
   import { videoDeckAuthority, type VideoDeckClipRecord } from "$lib/stores/videoDeck";
@@ -31,6 +40,9 @@
   } from "$lib/video/hotDeckSwitchStatus";
   import { enforceSilentVideoElement } from "$lib/video/mediaMute";
   import { WebGpuVideoPresenter } from "$lib/rendering/webgpu/WebGpuVideoPresenter";
+  import type { TimeShaperTriggerEvent } from "$lib/midi/types";
+  import EnvelopePresetGallery from "$lib/time-shaper/EnvelopePresetGallery.svelte";
+  import TriggerEventStrip from "$lib/time-shaper/TriggerEventStrip.svelte";
 
   export let duration = 0;
   export let currentTime = 0;
@@ -61,6 +73,9 @@
   let timeShaperLastTriggeredAtMs: number | null = null;
   let timeShaperActiveUntilMs = 0;
   let timeShaperNextTriggerAllowedAtMs = 0;
+  let timeShaperAudioTriggerStartSeconds: number | null = null;
+  let timeShaperAudioTriggerId = "";
+  let lastLoggedTimeShaperEventId = "";
   let switchSkipChancePercent = 0;
   let onsetSwitchTarget = 4;
   let onsetCountForClip = 0;
@@ -98,182 +113,6 @@
     ) => number;
     cancelVideoFrameCallback?: (handle: number) => void;
   };
-
-  interface TimeShapePreset {
-    id: string;
-    label: string;
-    shortLabel: string;
-    playbackMode: VideoTimeShapePlaybackMode;
-    mode: VideoTimeShapeStepMode;
-    cycleBeats: number;
-    yRangeBeats: number;
-    repeatWindowBeats?: number;
-    tapeStopFloor?: number;
-    points: VideoTimeShapeCurve["points"];
-  }
-
-  const timeShapePresets: TimeShapePreset[] = [
-    {
-      id: "stutter-1-8",
-      label: "1/8 Beat Stutter",
-      shortLabel: "STT 1/8",
-      playbackMode: "stutterRepeat",
-      mode: "instantStep",
-      cycleBeats: 1,
-      yRangeBeats: 0.5,
-      repeatWindowBeats: 0.125,
-      points: [
-        { x: 0, y: 0 },
-        { x: 0.24, y: -0.2 },
-        { x: 0.5, y: -0.65 },
-        { x: 0.75, y: -0.35 },
-        { x: 1, y: 0 },
-      ],
-    },
-    {
-      id: "scratch-back",
-      label: "Backspin Scratch",
-      shortLabel: "SCRATCH",
-      playbackMode: "sourceOffset",
-      mode: "instantStep",
-      cycleBeats: 2,
-      yRangeBeats: 2,
-      points: [
-        { x: 0, y: 0 },
-        { x: 0.18, y: -0.85 },
-        { x: 0.38, y: 0.2 },
-        { x: 0.58, y: -1 },
-        { x: 1, y: 0 },
-      ],
-    },
-    {
-      id: "reverse-slice",
-      label: "Reverse Slice",
-      shortLabel: "REV",
-      playbackMode: "reverse",
-      mode: "smoothStep",
-      cycleBeats: 4,
-      yRangeBeats: 0.75,
-      points: [
-        { x: 0, y: 0 },
-        { x: 0.5, y: -0.5 },
-        { x: 1, y: 0 },
-      ],
-    },
-    {
-      id: "tape-stop",
-      label: "Tape Stop",
-      shortLabel: "TAPE",
-      playbackMode: "tapeStop",
-      mode: "smoothStep",
-      cycleBeats: 4,
-      yRangeBeats: 1,
-      tapeStopFloor: 0.08,
-      points: [
-        { x: 0, y: 0 },
-        { x: 0.35, y: -0.1 },
-        { x: 0.75, y: -0.75 },
-        { x: 1, y: -1 },
-      ],
-    },
-    {
-      id: "half-time",
-      label: "Half-Time Drag",
-      shortLabel: "HALF",
-      playbackMode: "sourceOffset",
-      mode: "smoothStep",
-      cycleBeats: 4,
-      yRangeBeats: 1,
-      points: [
-        { x: 0, y: 0 },
-        { x: 0.5, y: -0.4 },
-        { x: 1, y: -0.8 },
-      ],
-    },
-    {
-      id: "triplet-skip-back",
-      label: "Triplet Skip-Back",
-      shortLabel: "TRIPLET",
-      playbackMode: "stutterRepeat",
-      mode: "instantStep",
-      cycleBeats: 1,
-      yRangeBeats: 0.45,
-      repeatWindowBeats: 1 / 3,
-      points: [
-        { x: 0, y: 0 },
-        { x: 0.16, y: -0.18 },
-        { x: 0.33, y: -0.62 },
-        { x: 0.5, y: -0.14 },
-        { x: 0.66, y: -0.58 },
-        { x: 0.83, y: -0.2 },
-        { x: 1, y: 0 },
-      ],
-    },
-    {
-      id: "ease-ramp-out",
-      label: "Easy Ease Ramp-Out",
-      shortLabel: "EASE OUT",
-      playbackMode: "sourceOffset",
-      mode: "smoothStep",
-      cycleBeats: 4,
-      yRangeBeats: 0.85,
-      points: [
-        { x: 0, y: 0 },
-        { x: 0.2, y: -0.08 },
-        { x: 0.48, y: -0.32 },
-        { x: 0.78, y: -0.72 },
-        { x: 1, y: -1 },
-      ],
-    },
-    {
-      id: "medium-ramp-up",
-      label: "Medium Ramp-Up",
-      shortLabel: "MID UP",
-      playbackMode: "sourceOffset",
-      mode: "smoothStep",
-      cycleBeats: 4,
-      yRangeBeats: 0.9,
-      points: [
-        { x: 0, y: 0 },
-        { x: 0.22, y: 0.1 },
-        { x: 0.5, y: 0.34 },
-        { x: 0.78, y: 0.68 },
-        { x: 1, y: 1 },
-      ],
-    },
-    {
-      id: "fast-in-slow-out",
-      label: "Fast In Slow Out",
-      shortLabel: "FI SO",
-      playbackMode: "sourceOffset",
-      mode: "smoothStep",
-      cycleBeats: 2,
-      yRangeBeats: 0.75,
-      points: [
-        { x: 0, y: 0 },
-        { x: 0.12, y: -0.58 },
-        { x: 0.38, y: -0.84 },
-        { x: 0.72, y: -0.95 },
-        { x: 1, y: -1 },
-      ],
-    },
-    {
-      id: "slow-in-fast-out",
-      label: "Slow In Fast Out",
-      shortLabel: "SI FO",
-      playbackMode: "sourceOffset",
-      mode: "smoothStep",
-      cycleBeats: 2,
-      yRangeBeats: 0.75,
-      points: [
-        { x: 0, y: 0 },
-        { x: 0.28, y: -0.06 },
-        { x: 0.62, y: -0.28 },
-        { x: 0.88, y: -0.72 },
-        { x: 1, y: -1 },
-      ],
-    },
-  ];
   const wrapMediaTime = (value: number, mediaDuration: number): number => {
     if (!Number.isFinite(value)) return 0;
     if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) return Math.max(0, value);
@@ -430,7 +269,7 @@
 
   let currentClip: VideoDeckClipRecord | undefined = undefined;
   let currentClipIndex = -1;
-  let currentTimeShapePreset: TimeShapePreset = timeShapePresets[0];
+  let currentTimeShapePreset = TIME_SHAPE_GESTURE_PRESETS[0];
   let nextPrewarmClip: VideoDeckClipRecord | undefined = undefined;
   let switchNotice = describeVideoDeckSwitchNotice({
     autoSwitchEnabled,
@@ -444,14 +283,15 @@
   let timeShapePreviewPoints = "";
   let timeShapePreviewPhase = 0;
   let timeShaperTriggerLabel = "20Hz–14kHz";
+  let transportTimeSeconds = 0;
+  let recentTimeShaperEvents: TimeShaperTriggerEvent[] = [];
 
   $: selectedClipId = $videoDeckAuthority.selectedClipId;
   $: authorityStatus = $videoDeckAuthority.status;
   $: onsetCountForClip = $videoDeckAuthority.onsetCountForClip;
   $: currentClip = clips.find((clip) => clip.id === selectedClipId);
   $: currentClipIndex = clips.findIndex((clip) => clip.id === selectedClipId);
-  $: currentTimeShapePreset =
-    timeShapePresets.find((preset) => preset.id === selectedTimeShapePresetId) ?? timeShapePresets[0];
+  $: currentTimeShapePreset = findTimeShapeGesturePreset(selectedTimeShapePresetId);
   $: nextPrewarmClip = (() => {
     const playable = playableClips();
     if (playable.length < 2 || !selectedClipId) return undefined;
@@ -482,10 +322,12 @@
     .join(" "), currentTimeShapePreset.id;
   $: timeShapePreviewPhase = (() => {
     const cycle = Math.max(0.0001, currentTimeShapePreset.cycleBeats);
-    const phase = (getBeatPosition() % cycle) / cycle;
+    const phase = (getTransportBeatPosition() % cycle) / cycle;
     return Math.max(0, Math.min(100, phase * 100));
   })();
   $: timeShaperTriggerLabel = `${formatFrequencyLabel($reactiveEnvelope.rangeStartHz)}–${formatFrequencyLabel($reactiveEnvelope.rangeEndHz)}`;
+  $: transportTimeSeconds = getTransportTimeSeconds();
+  $: recentTimeShaperEvents = $timeShaperRecentEvents.slice(-16);
   $: enforceSilentVideoElement(player);
   $: enforceSilentVideoElement(prewarmPlayer);
   $: if (webGpuEngineReady) {
@@ -636,22 +478,61 @@
     envelopeGateEnabled = !envelopeGateEnabled;
   };
 
-  const buildTimeShapeCurve = (): VideoTimeShapeCurve => ({
-    points: currentTimeShapePreset.points,
-    cycleBeats: currentTimeShapePreset.cycleBeats,
-    yRangeBeats: currentTimeShapePreset.yRangeBeats,
-    mode: currentTimeShapePreset.mode,
-    playbackMode: currentTimeShapePreset.playbackMode,
-    repeatWindowBeats: currentTimeShapePreset.repeatWindowBeats,
-    tapeStopFloor: currentTimeShapePreset.tapeStopFloor,
-    mix: timeShaperMix,
-    depth: timeShaperDepth,
+  const buildTimeShapeCurve = (
+    preset = currentTimeShapePreset,
+    mixScale = 1,
+  ): VideoTimeShapeCurve => ({
+    points: preset.points,
+    cycleBeats: preset.cycleBeats,
+    yRangeBeats: preset.yRangeBeats,
+    mode: preset.mode,
+    playbackMode: preset.playbackMode,
+    repeatWindowBeats: preset.repeatWindowBeats,
+    tapeStopFloor: preset.tapeStopFloor,
+    mix: timeShaperMix * mixScale,
+    depth: timeShaperDepth * mixScale,
     bypass: !timeShaperEnabled,
   });
 
-  const getBeatPosition = (): number => {
+  const getTransportBeatPosition = (): number => {
     const bpm = Math.max(20, Math.min(300, $tempoState.bpm || 120));
-    return Math.max(0, (Date.now() - $tempoState.downbeatEpochMs) / 1000 / (60 / bpm));
+    const secondsPerBeat = 60 / bpm;
+    if ($audioRuntime.source === "file" && ($audioRuntime.isPlaying || $audioRuntime.currentTime > 0)) {
+      return Math.max(0, ($audioRuntime.currentTime - $transportAlignment.firstBeatSeconds) / secondsPerBeat);
+    }
+    return Math.max(0, (Date.now() - $tempoState.downbeatEpochMs) / 1000 / secondsPerBeat);
+  };
+
+  const getTransportTimeSeconds = (): number => {
+    if ($audioRuntime.source === "file" && ($audioRuntime.isPlaying || $audioRuntime.currentTime > 0)) {
+      return Math.max(0, $audioRuntime.currentTime);
+    }
+    return Math.max(0, currentTime || player?.currentTime || 0);
+  };
+
+  const pushRecentTimeShaperEvent = (event: TimeShaperTriggerEvent) => {
+    if (lastLoggedTimeShaperEventId === event.id) return;
+    lastLoggedTimeShaperEventId = event.id;
+    timeShaperRecentEvents.update((events) => [...events.slice(-31), event]);
+  };
+
+  const buildAudioTriggerEvent = (
+    transportSeconds: number,
+    fallbackDurationSeconds: number,
+    score: number,
+  ): TimeShaperTriggerEvent | null => {
+    const audioEventDurationSeconds = Math.max(0.08, fallbackDurationSeconds);
+    if (timeShaperAudioTriggerStartSeconds === null) return null;
+    if (transportSeconds > timeShaperAudioTriggerStartSeconds + audioEventDurationSeconds) return null;
+    return {
+      id: timeShaperAudioTriggerId,
+      source: "audio",
+      label: `Audio · ${score.toFixed(2)}`,
+      startSeconds: timeShaperAudioTriggerStartSeconds,
+      durationSeconds: audioEventDurationSeconds,
+      velocity: Math.max(0.2, Math.min(1, score)),
+      color: "#f59e0b",
+    };
   };
 
   const getTimeShaperTriggerWindow = (secondsPerBeat: number) => {
@@ -692,12 +573,12 @@
     const triggerWindow = getTimeShaperTriggerWindow(secondsPerBeat);
     const audioTrigger = evaluateAudioTrigger(
       {
-        enabled: true,
+        enabled: $timeShaperTriggerSource !== "midi",
         band: "effectRange",
         threshold: $reactiveEnvelope.threshold,
         sensitivity: $reactiveEnvelope.sensitivity,
         detail: timeShaperDepth,
-        triggerShiftMs: 0,
+        triggerShiftMs: $timeShaperTriggerShiftMs,
         lastTriggeredAtMs: timeShaperLastTriggeredAtMs,
       },
       $audioBands,
@@ -712,27 +593,104 @@
       timeShaperNextTriggerAllowedAtMs = now + triggerWindow.cooldownMs;
     }
 
-    const triggerActive =
-      triggeredNow ||
-      now < timeShaperActiveUntilMs ||
-      currentTimeShapePreset.id === "half-time";
+    const selectedEnvelopePreset = findTimeShaperEnvelopePreset($timeShaperEnvelopePresetId);
+    const defaultDurationSeconds = Math.max(
+      selectedEnvelopePreset.defaultDurationBeats * secondsPerBeat,
+      currentTimeShapePreset.cycleBeats * secondsPerBeat,
+    );
 
-    if (!triggerActive) {
-      const cooldownSeconds = Math.max(
-        0,
-        (timeShaperNextTriggerAllowedAtMs - now) / 1000,
-      );
-      timeShaperStatus = cooldownBlocked
-        ? `TS cooling ${cooldownSeconds.toFixed(1)}s · FX ${timeShaperTriggerLabel}`
-        : `TS armed · FX ${timeShaperTriggerLabel} · ${audioTrigger.score.toFixed(2)}`;
+    if (audioTrigger.status === "triggered" && audioTrigger.triggerAtMs !== null) {
+      timeShaperLastTriggeredAtMs = now;
+      timeShaperAudioTriggerStartSeconds =
+        getTransportTimeSeconds() + (audioTrigger.triggerAtMs - now) / 1000;
+      timeShaperAudioTriggerId = `audio-${audioTrigger.triggerAtMs}`;
+    }
+
+    const activeMidiEvent = findActiveMidiTriggerEvent(
+      $midiTriggerStreams,
+      getTransportTimeSeconds(),
+      defaultDurationSeconds,
+      $activeSection,
+    );
+    const activeAudioEvent = buildAudioTriggerEvent(
+      getTransportTimeSeconds(),
+      defaultDurationSeconds,
+      audioTrigger.score,
+    );
+
+    const activeTriggerEvent =
+      $timeShaperTriggerSource === "midi"
+        ? activeMidiEvent
+        : $timeShaperTriggerSource === "hybrid"
+          ? [activeMidiEvent, activeAudioEvent]
+              .filter((value): value is TimeShaperTriggerEvent => Boolean(value))
+              .sort((left, right) => right.startSeconds - left.startSeconds)[0] ?? null
+          : activeAudioEvent;
+
+    if (!activeTriggerEvent) {
+      const fallbackContinuousTrigger =
+        now < timeShaperActiveUntilMs ||
+        shouldUseContinuousTimeShaperFallback(
+          $timeShaperTriggerSource,
+          audioTrigger.status,
+          $audioBands.envelopeA,
+          $reactiveEnvelope.threshold,
+          currentTimeShapePreset.id,
+        );
+
+      if (!fallbackContinuousTrigger) {
+        const cooldownSeconds = Math.max(0, (timeShaperNextTriggerAllowedAtMs - now) / 1000);
+        timeShaperStatus = cooldownBlocked
+          ? `TS cooling ${cooldownSeconds.toFixed(1)}s · FX ${timeShaperTriggerLabel}`
+          : `TS armed · FX ${timeShaperTriggerLabel} · ${audioTrigger.score.toFixed(2)}`;
+        return;
+      }
+
+      const fallbackResult = applyVideoTimeShape({
+        normalSourceTimeSeconds: player.currentTime || 0,
+        beatPosition: getTransportBeatPosition(),
+        secondsPerBeat,
+        curve: buildTimeShapeCurve(),
+      });
+      const fallbackShapedTime = wrapMediaTime(fallbackResult.sourceTimeSeconds, duration);
+      const fallbackDelta = Math.abs(fallbackShapedTime - (player.currentTime || 0));
+      const fallbackSeekThreshold = fallbackResult.metadata.hardJump ? 0.01 : 0.035;
+      const fallbackAllowSourceJump = fallbackResult.metadata.playbackMode !== "tapeStop";
+      const fallbackMinSeekIntervalMs = webGpuEngineReady ? 78 : 45;
+
+      if (
+        fallbackAllowSourceJump &&
+        !player.seeking &&
+        player.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        fallbackDelta > fallbackSeekThreshold &&
+        now - timeShaperLastAppliedMs > fallbackMinSeekIntervalMs
+      ) {
+        player.currentTime = fallbackShapedTime;
+        timeShaperLastAppliedMs = now;
+      }
+
+      const fallbackBasePlaybackRate = Math.max(0.25, Math.min(speedDomainMax, currentPlaybackRate || 1));
+      const fallbackRawShapedRate = Math.max(0.5, Math.min(speedDomainMax, Math.abs(fallbackResult.playbackRate || 1)));
+      const fallbackTargetRate = Math.max(0.25, Math.min(speedDomainMax, fallbackBasePlaybackRate * fallbackRawShapedRate));
+      const fallbackMixedRate = fallbackBasePlaybackRate + (fallbackTargetRate - fallbackBasePlaybackRate) * fallbackResult.mixAmount;
+      player.playbackRate = fallbackMixedRate;
+      currentPlaybackRate = fallbackMixedRate;
+      timeShaperStatus = `${currentTimeShapePreset.shortLabel} · continuous fallback · ${fallbackResult.metadata.playbackMode}`;
       return;
     }
 
+    pushRecentTimeShaperEvent(activeTriggerEvent);
+    const activePreset = findTimeShapeGesturePreset(activeTriggerEvent.targetPresetId ?? selectedTimeShapePresetId);
+    const eventElapsedSeconds = Math.max(0, getTransportTimeSeconds() - activeTriggerEvent.startSeconds);
+    const eventDurationSeconds = Math.max(activeTriggerEvent.durationSeconds, defaultDurationSeconds);
+    const eventProgress = Math.max(0, Math.min(1, eventElapsedSeconds / eventDurationSeconds));
+    const envelopeAmount = sampleEnvelopePreset(selectedEnvelopePreset, eventProgress);
+    const velocityMixScale = Math.max(0.2, Math.min(1, activeTriggerEvent.velocity));
     const result = applyVideoTimeShape({
       normalSourceTimeSeconds: player.currentTime || 0,
-      beatPosition: getBeatPosition(),
+      beatPosition: eventProgress * activePreset.cycleBeats,
       secondsPerBeat,
-      curve: buildTimeShapeCurve(),
+      curve: buildTimeShapeCurve(activePreset, envelopeAmount * velocityMixScale),
     });
     const shapedTime = wrapMediaTime(result.sourceTimeSeconds, duration);
     const delta = Math.abs(shapedTime - (player.currentTime || 0));
@@ -752,19 +710,12 @@
     }
 
     const basePlaybackRate = Math.max(0.25, Math.min(speedDomainMax, currentPlaybackRate || 1));
-    const rawShapedRate = Math.max(
-      0.5,
-      Math.min(speedDomainMax, Math.abs(result.playbackRate || 1)),
-    );
-    const tsTargetRate = Math.max(
-      0.25,
-      Math.min(speedDomainMax, basePlaybackRate * rawShapedRate),
-    );
-    const mixedRate =
-      basePlaybackRate + (tsTargetRate - basePlaybackRate) * result.mixAmount;
+    const rawShapedRate = Math.max(0.5, Math.min(speedDomainMax, Math.abs(result.playbackRate || 1)));
+    const tsTargetRate = Math.max(0.25, Math.min(speedDomainMax, basePlaybackRate * rawShapedRate));
+    const mixedRate = basePlaybackRate + (tsTargetRate - basePlaybackRate) * result.mixAmount;
     player.playbackRate = mixedRate;
     currentPlaybackRate = mixedRate;
-    timeShaperStatus = `${currentTimeShapePreset.shortLabel} · ${(result.mixAmount * 100).toFixed(0)}% · ${result.metadata.playbackMode}`;
+    timeShaperStatus = `${activePreset.shortLabel} · ${selectedEnvelopePreset.label} · ${(result.mixAmount * 100).toFixed(0)}%`;
   };
 
   const applySpeedRamp = () => {
@@ -1232,11 +1183,11 @@
                 on:click={stop}>⏹</button
               >
             </div>
-            <div
-              class="flex items-center gap-1 px-1 py-0.5 rounded-sm border border-surface-700 bg-surface-900"
-              data-testid="timeshaper-preset-controls"
-            >
-              <button
+	            <div
+	              class="flex flex-wrap items-center gap-1 px-1 py-0.5 rounded-sm border border-surface-700 bg-surface-900"
+	              data-testid="timeshaper-preset-controls"
+	            >
+	              <button
                 class="btn btn-sm text-[0.58rem] px-1.5 py-0.5 border font-bold {timeShaperEnabled
                   ? 'border-primary-500 bg-primary-500/20 text-primary-400'
                   : 'border-surface-700 bg-surface-800 text-surface-400'}"
@@ -1255,13 +1206,24 @@
               <select
                 id="timeshaper-preset"
                 bind:value={selectedTimeShapePresetId}
-                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.5rem] font-mono text-surface-200"
+                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
                 aria-label="TimeShaper curve preset"
                 title="Choose the preset curve that remaps video timing with stutters, scratches, tape-stop drags, or easing ramps."
               >
-                {#each timeShapePresets as preset}
+                {#each TIME_SHAPE_GESTURE_PRESETS as preset}
                   <option value={preset.id}>{preset.label}</option>
                 {/each}
+              </select>
+              <label for="timeshaper-source" class="text-[0.52rem] text-surface-400 uppercase font-bold">Source</label>
+              <select
+                id="timeshaper-source"
+                bind:value={$timeShaperTriggerSource}
+                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
+                aria-label="TimeShaper trigger source"
+              >
+                <option value="audio">Audio</option>
+                <option value="midi">MIDI</option>
+                <option value="hybrid">Hybrid</option>
               </select>
               <svg
                 class="h-8 w-24 rounded-sm border border-surface-700 bg-surface-950"
@@ -1282,7 +1244,7 @@
                 />
                 <line x1={timeShapePreviewPhase} x2={timeShapePreviewPhase} y1="0" y2="100" stroke="rgb(245,158,11)" stroke-width="1.5" />
               </svg>
-              <label for="timeshaper-mix" class="text-[0.52rem] text-surface-400 uppercase font-bold">Mix</label>
+	              <label for="timeshaper-mix" class="text-[0.52rem] text-surface-400 uppercase font-bold">Mix</label>
               <input
                 id="timeshaper-mix"
                 type="range"
@@ -1317,11 +1279,26 @@
                 aria-label="TimeShaper trigger range"
                 title="TimeShaper now follows the Audio Reactive panel's draggable effect span instead of a separate low/mid/high/full selector."
               >
-                FX {timeShaperTriggerLabel}
-              </div>
-              <div
-                class="flex items-center gap-1"
-                data-testid="onset-progress-meter"
+	                FX {timeShaperTriggerLabel}
+	              </div>
+	              <label for="timeshaper-trigger-shift" class="text-[0.52rem] text-surface-400 uppercase font-bold">Shift</label>
+	              <input
+	                id="timeshaper-trigger-shift"
+	                type="range"
+	                min="-250"
+	                max="250"
+	                step="1"
+	                bind:value={$timeShaperTriggerShiftMs}
+	                class="w-16 h-1 accent-primary-500"
+	                aria-label="TimeShaper trigger shift"
+	                title="Move event-triggered envelopes earlier or later in milliseconds."
+	              />
+	              <span class="text-[0.5rem] font-mono text-surface-400 w-12 text-right">
+	                {$timeShaperTriggerShiftMs}ms
+	              </span>
+	              <div
+	                class="flex items-center gap-1"
+	                data-testid="onset-progress-meter"
                 title="Accumulated onsets for the current clip. Filled dots and bar show progress toward the switch target."
               >
                 <span class="text-[0.52rem] text-surface-400 font-mono">
@@ -1361,9 +1338,9 @@
                 on:input={applyOnsetTarget}
                 class="w-10 bg-surface-950 border border-surface-700 rounded-sm px-1 py-0 text-[0.52rem] font-mono text-surface-300 text-right"
                 aria-label="Onsets before next clip"
-                title="The current clip repeats until this many audio onsets are counted, then the next active matrix clip is selected on the quantized beat/bar boundary."
-              />
-            </div>
+	                title="The current clip repeats until this many audio onsets are counted, then the next active matrix clip is selected on the quantized beat/bar boundary."
+	              />
+	            </div>
             <button
               class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {envelopeGateEnabled
                 ? 'border-primary-500 bg-primary-500/20 text-primary-400'
@@ -1419,9 +1396,31 @@
                 {(switchSkipChancePercent / 100).toFixed(2)}
               </span>
             </div>
-          </div>
-        </div>
-        {#if nextPrewarmClip}
+	            </div>
+	          </div>
+	          <div class="absolute inset-x-2 bottom-11 z-10 flex flex-col gap-1 pointer-events-none">
+	            <TriggerEventStrip events={recentTimeShaperEvents} transportTime={transportTimeSeconds} />
+	            <div class="pointer-events-auto rounded-sm border border-surface-700 bg-surface-950/92 p-1 backdrop-blur-sm">
+	              <div class="mb-1 flex items-center justify-between gap-2">
+	                <div>
+	                  <div class="text-[0.52rem] font-bold uppercase tracking-[0.16em] text-primary-400">
+	                    Trigger Envelopes
+	                  </div>
+	                  <div class="text-[0.5rem] text-surface-500">
+	                    Visual ramp presets for event-fired TimeShaper gestures.
+	                  </div>
+	                </div>
+	                <div class="text-[0.52rem] font-mono text-surface-400">
+	                  {$timeShaperTriggerSource.toUpperCase()}
+	                </div>
+	              </div>
+	              <EnvelopePresetGallery
+	                selectedId={$timeShaperEnvelopePresetId}
+	                onSelect={(id) => $timeShaperEnvelopePresetId = id as typeof $timeShaperEnvelopePresetId}
+	              />
+	            </div>
+	          </div>
+	        {#if nextPrewarmClip}
           <video
             bind:this={prewarmPlayer}
             src={nextPrewarmClip.url}
