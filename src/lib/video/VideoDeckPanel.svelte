@@ -626,9 +626,11 @@
       $timeShaperTriggerSource === "midi"
         ? activeMidiEvent
         : $timeShaperTriggerSource === "hybrid"
-          ? [activeMidiEvent, activeAudioEvent]
-              .filter((value): value is TimeShaperTriggerEvent => Boolean(value))
-              .sort((left, right) => right.startSeconds - left.startSeconds)[0] ?? null
+          ? activeMidiEvent && activeAudioEvent
+            ? (activeMidiEvent.startSeconds >= activeAudioEvent.startSeconds
+                ? activeMidiEvent
+                : activeAudioEvent)
+            : (activeMidiEvent ?? activeAudioEvent)
           : activeAudioEvent;
 
     if (!activeTriggerEvent) {

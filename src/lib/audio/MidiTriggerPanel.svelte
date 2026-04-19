@@ -103,7 +103,7 @@
     {#each $midiTriggerStreams as stream}
       <div class="rounded-sm border border-surface-800 bg-surface-900 p-1 text-[0.55rem]">
         <div class="flex items-center gap-1 mb-1">
-          <input type="color" bind:value={stream.color} class="h-6 w-6 rounded-sm border border-surface-700 bg-transparent p-0"
+          <input type="color" value={stream.color} class="h-6 w-6 rounded-sm border border-surface-700 bg-transparent p-0"
             onchange={(event) => updateStream(stream.id, (entry) => ({ ...entry, color: (event.currentTarget as HTMLInputElement).value }))} />
           <button class="px-1.5 py-0.5 rounded-sm border {stream.visible ? 'border-primary-500 text-primary-300' : 'border-surface-700 text-surface-500'}"
             onclick={() => updateStream(stream.id, (entry) => ({ ...entry, visible: !entry.visible }))}>

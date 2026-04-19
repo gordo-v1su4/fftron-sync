@@ -25,6 +25,44 @@ const chunk = (id: string, data: number[]): number[] => [
   ...data
 ];
 
+
+const buildSysexRunningStatusMidi = (): ArrayBuffer => {
+  const header = [
+    ...'MThd'.split('').map((char) => char.charCodeAt(0)),
+    0x00, 0x00, 0x00, 0x06,
+    0x00, 0x00,
+    0x00, 0x01,
+    0x00, 0x60
+  ];
+
+  const trackData = [
+    0x00, 0x90, 0x3c, 0x64,
+    0x00, 0xf0, 0x01, 0x7f,
+    0x00, 0x3e, 0x64,
+    ...encodeVarLen(0x60), 0x80, 0x3c, 0x00,
+    0x00, 0xff, 0x2f, 0x00
+  ];
+
+  return new Uint8Array([...header, ...chunk('MTrk', trackData)]).buffer;
+};
+
+const buildMalformedVarLenMidi = (): ArrayBuffer => {
+  const header = [
+    ...'MThd'.split('').map((char) => char.charCodeAt(0)),
+    0x00, 0x00, 0x00, 0x06,
+    0x00, 0x00,
+    0x00, 0x01,
+    0x00, 0x60
+  ];
+
+  const trackData = [
+    0x80, 0x80, 0x80, 0x80, 0x80,
+    0xff, 0x2f, 0x00
+  ];
+
+  return new Uint8Array([...header, ...chunk('MTrk', trackData)]).buffer;
+};
+
 const buildSimpleMidi = (): ArrayBuffer => {
   const header = [
     ...'MThd'.split('').map((char) => char.charCodeAt(0)),
@@ -58,6 +96,17 @@ describe('parseMidiFile', () => {
       durationSeconds: expect.closeTo(0.5, 5),
       trackName: 'Kick'
     });
+  });
+
+  it('does not reuse running status after a sysex event', () => {
+    const parsed = parseMidiFile(buildSysexRunningStatusMidi(), 'sysex.mid');
+
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0]?.note).toBe(60);
+  });
+
+  it('bounds malformed variable-length quantities to four bytes', () => {
+    expect(() => parseMidiFile(buildMalformedVarLenMidi(), 'malformed.mid')).toThrow();
   });
 
   it('rejects invalid headers', () => {

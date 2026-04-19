@@ -25,7 +25,7 @@ const readUint16 = (view: DataView, offset: number): number => view.getUint16(of
 const readVarLen = (view: DataView, start: number): { value: number; nextOffset: number } => {
   let value = 0;
   let offset = start;
-  while (offset < view.byteLength) {
+  for (let index = 0; index < 4 && offset < view.byteLength; index += 1) {
     const byte = view.getUint8(offset);
     value = (value << 7) | (byte & 0x7f);
     offset += 1;
@@ -183,6 +183,7 @@ export const parseMidiFile = (buffer: ArrayBuffer, name = 'midi-file.mid'): Pars
       }
 
       if (status === 0xf0 || status === 0xf7) {
+        runningStatus = 0;
         const sysexLength = readVarLen(view, offset);
         offset = sysexLength.nextOffset + sysexLength.value;
         continue;

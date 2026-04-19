@@ -2,9 +2,31 @@ import { pruneMidiEventsByDensity } from '$lib/midi/densityPruning';
 import type { MidiTriggerStream, TimeShaperTriggerEvent } from '$lib/midi/types';
 
 const DEFAULT_TRIGGER_COLOR = '#f59e0b';
+
+const findLastCandidateIndex = (
+  starts: readonly number[],
+  target: number,
+): number => {
+  let low = 0;
+  let high = starts.length - 1;
+  let result = -1;
+
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const value = starts[middle] ?? Number.POSITIVE_INFINITY;
+    if (value <= target) {
+      result = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  return result;
+};
 const streamEventCache = new WeakMap<
   MidiTriggerStream,
-  { signature: string; events: ReturnType<typeof pruneMidiEventsByDensity> }
+  { signature: string; events: ReturnType<typeof pruneMidiEventsByDensity>; starts: number[] }
 >();
 
 export const getFilteredStreamEvents = (stream: MidiTriggerStream) => {
@@ -22,7 +44,11 @@ export const getFilteredStreamEvents = (stream: MidiTriggerStream) => {
 
   const filtered = pruneMidiEventsByDensity(stream.events, stream.density);
   if (stream.trackFilter === 'all') {
-    streamEventCache.set(stream, { signature, events: filtered });
+    streamEventCache.set(stream, {
+      signature,
+      events: filtered,
+      starts: filtered.map((event) => event.startSeconds),
+    });
     return filtered;
   }
 
@@ -40,9 +66,16 @@ export const getFilteredStreamEvents = (stream: MidiTriggerStream) => {
     return true;
   });
 
-  streamEventCache.set(stream, { signature, events: scoped });
+  streamEventCache.set(stream, {
+    signature,
+    events: scoped,
+    starts: scoped.map((event) => event.startSeconds),
+  });
   return scoped;
 };
+
+const getFilteredStreamStarts = (stream: MidiTriggerStream): number[] =>
+  streamEventCache.get(stream)?.starts ?? getFilteredStreamEvents(stream).map((event) => event.startSeconds);
 
 export const findActiveMidiTriggerEvent = (
   streams: readonly MidiTriggerStream[],
@@ -59,11 +92,24 @@ export const findActiveMidiTriggerEvent = (
       continue;
     }
 
-    for (const event of getFilteredStreamEvents(stream)) {
-      const adjustedStartSeconds =
-        event.startSeconds + stream.offsetMs / 1000 + triggerShiftMs / 1000;
+    const events = getFilteredStreamEvents(stream);
+    const starts = getFilteredStreamStarts(stream);
+    const startOffsetSeconds = stream.offsetMs / 1000 + triggerShiftMs / 1000;
+    const latestStartIndex = findLastCandidateIndex(
+      starts,
+      transportTimeSeconds - startOffsetSeconds,
+    );
+
+    for (let index = latestStartIndex; index >= 0; index -= 1) {
+      const event = events[index];
+      if (!event) continue;
+
+      const adjustedStartSeconds = event.startSeconds + startOffsetSeconds;
       const durationSeconds = Math.max(fallbackDurationSeconds, event.durationSeconds);
-      if (transportTimeSeconds < adjustedStartSeconds || transportTimeSeconds > adjustedStartSeconds + durationSeconds) {
+      if (transportTimeSeconds > adjustedStartSeconds + durationSeconds) {
+        break;
+      }
+      if (transportTimeSeconds < adjustedStartSeconds) {
         continue;
       }
 
@@ -83,6 +129,7 @@ export const findActiveMidiTriggerEvent = (
       if (!winner || candidate.startSeconds > winner.startSeconds) {
         winner = candidate;
       }
+      break;
     }
   }
 

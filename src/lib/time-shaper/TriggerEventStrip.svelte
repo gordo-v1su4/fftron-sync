@@ -14,7 +14,7 @@
 
 <div class="relative h-14 rounded-sm border border-surface-800 bg-surface-950 overflow-hidden" data-testid="timeshaper-trigger-strip">
   <div class="absolute inset-0 bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px)] bg-[size:8%_100%]"></div>
-  <div class="absolute inset-y-0 left-[80%] w-px bg-primary-500/60"></div>
+  <div class="absolute inset-y-0 left-[94%] w-px bg-primary-500/60"></div>
   {#each visibleEvents() as event}
     <div class="absolute bottom-0 w-3 -translate-x-1/2" style={`left:${positionFor(event)}%`}>
       <div class="mx-auto h-9 w-[2px] rounded-full" style={`background:${event.color}`} title={event.label}></div>
