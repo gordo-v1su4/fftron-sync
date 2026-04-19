@@ -7,7 +7,11 @@
     automationRuntime,
     essentiaAnalysis,
     markers,
+    midiTriggerStreams,
+    onsetMarkerDensity,
     tempoState,
+    timelineMarkerMode,
+    timelineShowSpeedLane,
     waveformOverview,
   } from "$lib/stores/runtime";
   import { buildWaveformViewportPath } from "$lib/audio/wav";
@@ -137,6 +141,7 @@
   let authoritativeOnsetMarkers: TimelineOnsetMarker[] = [];
   let _ignoredLiveFallback: TimelineOnsetMarker[] = [];
   let _ignoredCountedDebug: TimelineOnsetMarker[] = [];
+  let midiTriggerMarkers: TimelineOnsetMarker[] = [];
   let sectionBands: Array<{
     section: string;
     label: string;
@@ -989,11 +994,16 @@
   $: ({
     authoritative: authoritativeOnsetMarkers,
     liveFallback: _ignoredLiveFallback,
-    countedDebug: _ignoredCountedDebug
+    countedDebug: _ignoredCountedDebug,
+    midi: midiTriggerMarkers
   } = buildTimelineOnsetLanes({
     authoritative: $audioOnsets,
     liveFallback: [],
     countedDebug: [],
+    midiStreams: $midiTriggerStreams,
+    activeSection: $activeSection,
+    markerMode: $timelineMarkerMode,
+    onsetDensity: $onsetMarkerDensity,
     durationSeconds: safeDuration,
     viewportStart,
     viewportWindow,
@@ -1157,9 +1167,9 @@
     ? !laneMuteState.waveform
     : laneSoloState === "waveform";
   $: stutterLaneActive = false;
-  $: speedLaneActive = laneSoloState === null
+  $: speedLaneActive = $timelineShowSpeedLane && (laneSoloState === null
     ? !laneMuteState.speed
-    : laneSoloState === "speed";
+    : laneSoloState === "speed");
   $: neutralSpeedNorm = mapRangeToNormalized(1, speedMinBound, speedMaxBound);
   $: effectiveSpeedAutomationValue = speedLaneActive
     ? currentSpeedValue
@@ -1286,6 +1296,66 @@
         </button>
         <button class="px-1.5 py-0.5 text-[0.55rem] text-surface-300 hover:bg-surface-800" on:click={() => panViewport(1)}>▶</button>
       </div>
+
+      <div class="flex bg-surface-950 rounded-sm border border-surface-800 overflow-hidden">
+        <button
+          class="px-2 py-0.5 text-[0.55rem] font-bold uppercase { $timelineMarkerMode === 'onsets'
+            ? 'bg-primary-500/20 text-primary-300'
+            : 'text-surface-500 hover:bg-surface-800'}"
+          aria-pressed={$timelineMarkerMode === "onsets"}
+          on:click={() => ($timelineMarkerMode = "onsets")}
+        >
+          Onsets
+        </button>
+        <button
+          class="px-2 py-0.5 text-[0.55rem] font-bold uppercase border-x border-surface-800 { $timelineMarkerMode === 'midi'
+            ? 'bg-primary-500/20 text-primary-300'
+            : 'text-surface-500 hover:bg-surface-800'}"
+          aria-pressed={$timelineMarkerMode === "midi"}
+          on:click={() => ($timelineMarkerMode = "midi")}
+        >
+          MIDI
+        </button>
+        <button
+          class="px-2 py-0.5 text-[0.55rem] font-bold uppercase { $timelineMarkerMode === 'both'
+            ? 'bg-primary-500/20 text-primary-300'
+            : 'text-surface-500 hover:bg-surface-800'}"
+          aria-pressed={$timelineMarkerMode === "both"}
+          on:click={() => ($timelineMarkerMode = "both")}
+        >
+          Both
+        </button>
+      </div>
+
+      <div class="flex items-center gap-1 rounded-sm border border-surface-800 bg-surface-950 px-2 py-0.5">
+        <span class="text-[0.5rem] uppercase tracking-[0.14em] text-surface-500">
+          Onset density
+        </span>
+        <input
+          type="range"
+          min="0.05"
+          max="1"
+          step="0.05"
+          bind:value={$onsetMarkerDensity}
+          class="w-18 h-1 accent-primary-500"
+          aria-label="Onset marker density"
+          title="Cull weaker onset markers first so only the stronger analyzed hits remain visible."
+        />
+        <span class="text-[0.52rem] font-mono text-surface-300">
+          {($onsetMarkerDensity * 100).toFixed(0)}%
+        </span>
+      </div>
+
+      <button
+        class="px-2 py-0.5 text-[0.55rem] font-bold uppercase rounded-sm border border-surface-800 bg-surface-950 { $timelineShowSpeedLane
+          ? 'text-primary-300'
+          : 'text-surface-500'}"
+        aria-pressed={$timelineShowSpeedLane}
+        on:click={() => ($timelineShowSpeedLane = !$timelineShowSpeedLane)}
+        title="Hide the speed automation lane when you want the waveform and MIDI/onset trigger markers to dominate the timeline."
+      >
+        Speed lane {$timelineShowSpeedLane ? "on" : "off"}
+      </button>
 
       <div class="flex bg-surface-950 rounded-sm border border-surface-800 overflow-hidden font-mono">
         <span class="px-2 py-0.5 text-[0.52rem] text-surface-300 border-r border-surface-800">
@@ -1471,6 +1541,18 @@
             title={marker.label}
           ></div>
         {/each}
+        {#each midiTriggerMarkers as marker}
+          <div
+            class="absolute top-0 bottom-0 z-20 w-[2px] opacity-90"
+            style={`left:${marker.position}%;background:${marker.color ?? '#38bdf8'}`}
+            title={marker.label}
+          ></div>
+          <div
+            class="absolute top-[8%] z-20 h-2 w-2 -translate-x-1/2 rounded-full border border-surface-950 shadow-[0_0_10px_rgba(56,189,248,0.35)]"
+            style={`left:${marker.position}%;background:${marker.color ?? '#38bdf8'}`}
+            title={marker.label}
+          ></div>
+        {/each}
         <div
           class="absolute left-0 right-0 top-[18%] z-10 border-t border-primary-300/40 border-dashed pointer-events-none"
           title="Approximate onset threshold guide"
@@ -1492,6 +1574,7 @@
       </div>
     </div>
 
+    {#if $timelineShowSpeedLane}
     <div class="flex-[2_2_0%] min-h-0 flex items-stretch bg-surface-900 {speedLaneActive
       ? ''
       : 'opacity-45'}">
@@ -1642,5 +1725,6 @@
         {/if}
       </div>
     </div>
+    {/if}
   </div>
 </div>

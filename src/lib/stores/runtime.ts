@@ -12,6 +12,12 @@ import type { EngineCueMarker } from '$lib/types/timeline';
 import type { WaveformOverview } from '$lib/audio/wav';
 import type { EssentiaFullResponse } from '$lib/services/essentia';
 import { mapRangeToNormalized } from '$lib/runtime/automationBounds';
+import type {
+  MidiTriggerStream,
+  TimeShaperTriggerEvent,
+  TimeShaperTriggerSource
+} from '$lib/midi/types';
+import type { TimeShaperEnvelopePresetId } from '$lib/runtime/time-shaper/envelopePresets';
 
 export interface TimelineSeekRequest {
   time: number;
@@ -183,3 +189,15 @@ export const automationBounds = writable<AutomationBoundsState>({
   stutterMin: 0,
   stutterMax: 0
 });
+
+export type TimelineMarkerMode = 'onsets' | 'midi' | 'both';
+
+export const midiTriggerStreams = writable<MidiTriggerStream[]>([]);
+export const timeShaperTriggerSource = writable<TimeShaperTriggerSource>('audio');
+export const timeShaperEnvelopePresetId = writable<TimeShaperEnvelopePresetId>('easy_ease');
+export const timeShaperTriggerShiftMs = writable<number>(0);
+export const timeShaperRecentEvents = writable<TimeShaperTriggerEvent[]>([]);
+
+export const timelineMarkerMode = writable<TimelineMarkerMode>('both');
+export const onsetMarkerDensity = writable<number>(0.45);
+export const timelineShowSpeedLane = writable<boolean>(true);
