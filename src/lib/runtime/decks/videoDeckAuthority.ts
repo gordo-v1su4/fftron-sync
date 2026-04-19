@@ -4,11 +4,13 @@ import {
   audioOnsets,
   audioRuntime,
   liveDetectedOnsets,
+  onsetMarkerDensity,
   onsetTransportState,
   switchProgressEvents,
   tempoState,
   transportAlignment,
 } from '$lib/stores/runtime';
+import { pruneOnsetEventsByDensity } from '$lib/timeline/onsetMarkers';
 import {
   advanceOnsetSwitchScheduler,
   carryOnsetSwitchSchedulerState,
@@ -315,6 +317,7 @@ export function startVideoDeckAuthorityScheduler(): () => void {
   let currentTransportAlignment = get(transportAlignment);
   let analyzedOnsetState = get(audioOnsets);
   let detectedOnsetState = get(liveDetectedOnsets);
+  let currentOnsetDensity = get(onsetMarkerDensity);
   let authorityMeta = initialMeta();
   let suppressAuthoritySubscribe = false;
 
@@ -325,7 +328,10 @@ export function startVideoDeckAuthorityScheduler(): () => void {
       audioSource: transportState.source,
       bpm: currentTempoState.bpm,
       firstBeatSeconds: currentTransportAlignment.firstBeatSeconds,
-      analyzedOnsets: analyzedOnsetState,
+      analyzedOnsets: pruneOnsetEventsByDensity(
+        analyzedOnsetState.filter((event) => event.source === 'essentia'),
+        currentOnsetDensity,
+      ),
       detectedOnsets: detectedOnsetState,
     }, Math.random());
     authorityMeta = next.meta;
@@ -362,6 +368,10 @@ export function startVideoDeckAuthorityScheduler(): () => void {
     }),
     liveDetectedOnsets.subscribe((value) => {
       detectedOnsetState = value;
+      recompute();
+    }),
+    onsetMarkerDensity.subscribe((value) => {
+      currentOnsetDensity = value;
       recompute();
     }),
   ];

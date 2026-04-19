@@ -50,7 +50,7 @@ const toViewportPercent = (
 const buildLabel = (event: AudioOnsetEvent, prefix: string): string =>
   `${prefix} · ${event.timeSeconds.toFixed(2)}s · ${event.band}`;
 
-const pruneOnsetEventsByDensity = (events: readonly AudioOnsetEvent[], density: number): AudioOnsetEvent[] => {
+export const pruneOnsetEventsByDensity = (events: readonly AudioOnsetEvent[], density: number): AudioOnsetEvent[] => {
   if (events.length <= 1) return [...events];
   const clampedDensity = clamp(density, 0.05, 1);
   if (clampedDensity >= 0.999) return [...events];

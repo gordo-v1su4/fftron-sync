@@ -10,12 +10,17 @@
     midiTriggerStreams,
     onsetMarkerDensity,
     tempoState,
+    timeShaperEnvelopePresetId,
     timelineMarkerMode,
     timelineShowSpeedLane,
     waveformOverview,
   } from "$lib/stores/runtime";
   import { buildWaveformViewportPath } from "$lib/audio/wav";
   import { buildTimelineOnsetLanes, type TimelineOnsetMarker } from "$lib/timeline/onsetMarkers";
+  import {
+    findTimeShaperEnvelopePreset,
+    sampleEnvelopePreset,
+  } from "$lib/runtime/time-shaper/envelopePresets";
   import {
     buildEssentiaPunchSpeedPresets,
     buildSpeedLanePresets,
@@ -160,6 +165,7 @@
     point: CurvePoint;
     localPercent: number;
   }> = [];
+  let speedEnvelopeOverlayPaths: Array<{ path: string; color: string }> = [];
   let currentSpeedValue = 0.5;
   let speedMinBound = 0.5;
   let speedMaxBound = 3;
@@ -298,6 +304,23 @@
       line,
       fill: `${line}L ${width},${height} L 0,${height} Z`,
     };
+  };
+
+  const buildEnvelopeOverlayPath = (
+    marker: TimelineOnsetMarker,
+    color: string,
+    selectedPreset = findTimeShaperEnvelopePreset($timeShaperEnvelopePresetId),
+  ): { path: string; color: string } => {
+    const width = 56;
+    const startX = marker.position * 10;
+    const points = Array.from({ length: 18 }, (_, index) => {
+      const progress = index / 17;
+      const x = startX + progress * width;
+      const yNorm = sampleEnvelopePreset(selectedPreset, progress);
+      const y = 78 - yNorm * 42;
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    }).join(" ");
+    return { path: points, color };
   };
 
   const buildViewportCurveSampleXs = (
@@ -1158,6 +1181,18 @@
   }
 
   $: normalizedPlayhead = clampValue(currentTime / safeDuration, 0, 1);
+  $: speedEnvelopeOverlayPaths = [
+    ...(($timelineMarkerMode === "midi" || $timelineMarkerMode === "both")
+      ? midiTriggerMarkers.slice(0, 12).map((marker) =>
+          buildEnvelopeOverlayPath(marker, marker.color ?? "#38bdf8"),
+        )
+      : []),
+    ...(($timelineMarkerMode === "onsets" || $timelineMarkerMode === "both")
+      ? authoritativeOnsetMarkers.slice(0, 12).map((marker) =>
+          buildEnvelopeOverlayPath(marker, "#86efac"),
+        )
+      : []),
+  ];
   $: currentSpeedValue = evaluateCurveY(
     speedPoints,
     speedInterpolation,
@@ -1684,6 +1719,17 @@
               <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.04" />
             </linearGradient>
           </defs>
+          {#each speedEnvelopeOverlayPaths as overlay}
+            <path
+              d={overlay.path}
+              fill="none"
+              stroke={overlay.color}
+              stroke-opacity="0.45"
+              stroke-width="1.15"
+              stroke-linejoin="round"
+              stroke-linecap="round"
+            />
+          {/each}
           <path d={speedRampPaths.fill} fill="url(#speedFillGradient)" />
           <path
             d={speedRampPaths.line}

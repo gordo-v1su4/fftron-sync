@@ -8,17 +8,23 @@
   export let selectedId = 'easy_ease';
   export let onSelect: (id: string) => void = () => {};
 
-  const sampleCount = 40;
+  const sampleCount = 36;
 
   const buildPreviewCoordinates = (preset: TimeShaperEnvelopePreset): Array<{ x: number; y: number }> =>
     Array.from({ length: sampleCount }, (_, index) => {
       const xNorm = index / (sampleCount - 1);
       const yNorm = sampleEnvelopePreset(preset, xNorm);
       return {
-        x: xNorm * 100,
-        y: 92 - yNorm * 74,
+        x: 8 + xNorm * 84,
+        y: 42 - yNorm * 26,
       };
     });
+
+  const buildKeyPoints = (preset: TimeShaperEnvelopePreset): Array<{ x: number; y: number }> =>
+    preset.points.map((point) => ({
+      x: 8 + point.x * 84,
+      y: 42 - point.y * 26,
+    }));
 
   const toSmoothPath = (points: Array<{ x: number; y: number }>): string => {
     if (points.length === 0) return '';
@@ -47,48 +53,60 @@
     if (points.length === 0) return '';
     const line = toSmoothPath(points);
     const last = points[points.length - 1];
-    return `${line} L ${last.x} 92 L 0 92 Z`;
+    return `${line} L ${last.x} 42 L 8 42 Z`;
   };
+
+  const shortLabel = (label: string): string =>
+    label
+      .replace('Release', 'Rel')
+      .replace('Attack', 'Atk')
+      .replace('Linear', 'Lin')
+      .replace('Sloped', 'Slp')
+      .replace('Stepped', 'Step')
+      .replace('Silence', 'Silent');
 </script>
 
-<div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-1" data-testid="timeshaper-envelope-gallery">
+<div class="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 xl:grid-cols-7 gap-x-2 gap-y-3" data-testid="timeshaper-envelope-gallery">
   {#each TIME_SHAPER_ENVELOPE_PRESETS as preset}
     <button
-      class="rounded-sm border p-1 text-left bg-surface-950 hover:bg-surface-900 transition-colors {preset.id === selectedId
-        ? 'border-primary-500 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.35)]'
-        : 'border-surface-800'}"
+      class="group flex flex-col items-center gap-1.5 rounded-sm px-0.5 py-0.5 text-center transition-colors {preset.id === selectedId ? 'text-primary-200' : 'text-surface-400 hover:text-surface-200'}"
       onclick={() => onSelect(preset.id)}
       title={preset.description}
       aria-pressed={preset.id === selectedId}
     >
-      <div class="mb-1 flex items-start justify-between gap-2">
-        <div>
-          <span class="text-[0.55rem] font-bold uppercase tracking-[0.16em] text-surface-300">{preset.label}</span>
-          <div class="text-[0.46rem] uppercase tracking-[0.16em] text-surface-500">{preset.mode.replace('_', ' ')}</div>
-        </div>
-        <span class="shrink-0 rounded-sm border border-surface-800 bg-surface-900 px-1 py-0.5 text-[0.48rem] text-surface-400 font-mono">{preset.defaultDurationBeats.toFixed(2)}b</span>
-      </div>
-      <svg class="w-full h-14 rounded-sm border border-surface-800 bg-surface-950" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="envFill-{preset.id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(59,130,246,0.28)" />
-            <stop offset="100%" stop-color="rgba(59,130,246,0.02)" />
-          </linearGradient>
-        </defs>
-        <path d="M0 92 H100" stroke="rgba(148,163,184,0.14)" stroke-width="1" />
-        <path d="M0 18 H100" stroke="rgba(203,213,225,0.05)" stroke-width="1" stroke-dasharray="2 2" />
-        <path d="M0 55 H100" stroke="rgba(203,213,225,0.04)" stroke-width="1" stroke-dasharray="2 2" />
-        <path d={buildPreviewFill(preset)} fill="url(#envFill-{preset.id})" stroke="none" />
+      <svg
+        class="h-10 w-10 rounded-md border {preset.id === selectedId
+          ? 'border-primary-500 bg-surface-900 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.2)]'
+          : 'border-surface-700 bg-surface-950 group-hover:border-surface-500'}"
+        viewBox="0 0 50 50"
+        preserveAspectRatio="xMidYMid meet"
+        aria-label={preset.label}
+      >
+        <path d="M8 42 H42" stroke="rgba(203,213,225,0.08)" stroke-width="0.8" />
+        <path d="M8 29 H42" stroke="rgba(203,213,225,0.05)" stroke-width="0.6" stroke-dasharray="2 2" />
+        <path d={buildPreviewFill(preset)} fill="rgba(96,165,250,0.08)" stroke="none" />
         <path
           d={buildPreviewPath(preset)}
           fill="none"
-          stroke="rgb(56,189,248)"
-          stroke-width="1.45"
+          stroke={preset.id === selectedId ? 'rgb(96,165,250)' : 'rgba(167,139,250,0.92)'}
+          stroke-width="1.1"
           stroke-linejoin="round"
           stroke-linecap="round"
         />
+        {#each buildKeyPoints(preset) as point}
+          <circle
+            cx={point.x}
+            cy={point.y}
+            r="1.15"
+            fill={preset.id === selectedId ? 'rgb(191,219,254)' : 'rgb(216,180,254)'}
+            stroke="rgba(15,23,42,0.95)"
+            stroke-width="0.55"
+          />
+        {/each}
       </svg>
-      <div class="mt-1 text-[0.5rem] text-surface-500 line-clamp-2">{preset.description}</div>
+      <div class="max-w-[4.5rem] text-[0.48rem] font-medium leading-tight {preset.id === selectedId ? 'text-primary-100' : 'text-surface-400'}">
+        {shortLabel(preset.label)}
+      </div>
     </button>
   {/each}
 </div>
