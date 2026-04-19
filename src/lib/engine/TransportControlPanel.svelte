@@ -35,6 +35,7 @@
   let selectedGrid: QuantizeGrid = "1/4n";
   let status = "Idle";
   let capabilityTruth = describeRuntimeCapabilityTruth($runtimeCapabilities);
+  let runtimeDetailsExpanded = false;
 
   const getErrorMessage = (error: unknown): string =>
     error instanceof Error ? error.message : "unknown error";
@@ -268,48 +269,73 @@
     </div>
   </div>
 
-  <div
-    class="flex-none flex flex-col gap-0.5 text-[0.55rem] text-surface-500 mt-1 uppercase tracking-tighter"
-  >
-    <div class="flex justify-between">
-      <span
-        >BPM {$tempoState.bpm.toFixed(2)} [{$tempoState.source}] Conf: {$tempoState.confidence.toFixed(
-          2,
-        )} Taps: {$tempoState.tapCount}</span
-      >
-      <span>Sec: <span class="text-surface-200">{$activeSection}</span></span>
-    </div>
-    <div class="flex justify-between">
-      <span
-        >FFmpeg: {$runtimeCapabilities.nativeFfmpeg ? "Yes" : "No"} Rust: {$runtimeCapabilities.rustFfmpegFeature
-          ? "Yes"
-          : "No"}</span
-      >
-      <span
-        >Queue: <span class="text-surface-200">{$scheduledActions.length}</span
-        ></span
-      >
-    </div>
-    <div class="flex justify-between">
-      <span class="text-emerald-300"
-        >Detected BPM: {$detectedTempo.bpm !== null
-          ? $detectedTempo.bpm.toFixed(2)
-          : "N/A"}</span
-      >
-      <span class="text-emerald-300"
-        >Detected Conf: {$detectedTempo.confidence !== null
-          ? `${($detectedTempo.confidence * 100).toFixed(0)}%`
-          : "N/A"}</span
-      >
-    </div>
-    <div class="flex justify-between gap-2">
-      <span>{capabilityTruth.engineSummary}</span>
-      <span class={capabilityTruth.tone === "error" ? "text-error-300" : "text-emerald-300"}>
-        {capabilityTruth.integrationNote}
+  <div class="flex-none mt-1 rounded-sm border border-surface-800 bg-surface-950 px-2 py-1">
+    <div class="flex flex-wrap items-center gap-1 text-[0.52rem] uppercase tracking-[0.14em] text-surface-500">
+      <span class="rounded-sm border border-surface-800 bg-surface-900 px-1.5 py-0.5 text-surface-300">
+        BPM {$tempoState.bpm.toFixed(2)}
       </span>
+      <span class="rounded-sm border border-surface-800 bg-surface-900 px-1.5 py-0.5 text-surface-300">
+        SEC {$activeSection || "--"}
+      </span>
+      <span class="rounded-sm border border-surface-800 bg-surface-900 px-1.5 py-0.5 text-surface-300">
+        Q {$scheduledActions.length}
+      </span>
+      <span class={capabilityTruth.tone === "error"
+        ? "rounded-sm border border-error-500/70 bg-error-500/10 px-1.5 py-0.5 text-error-200"
+        : "rounded-sm border border-emerald-500/60 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200"}>
+        {capabilityTruth.engineSummary}
+      </span>
+      <button
+        class="ml-auto rounded-sm border border-surface-700 bg-surface-900 px-1.5 py-0.5 text-[0.5rem] font-bold uppercase tracking-[0.16em] text-surface-300 hover:bg-surface-800"
+        aria-expanded={runtimeDetailsExpanded}
+        on:click={() => (runtimeDetailsExpanded = !runtimeDetailsExpanded)}
+      >
+        {runtimeDetailsExpanded ? "Hide info" : "More info"}
+      </button>
     </div>
-    <div class="text-[0.52rem] normal-case tracking-normal {capabilityTruth.tone === 'error' ? 'text-error-200' : 'text-surface-400'}">
-      {capabilityTruth.integrationNote}
-    </div>
+
+    {#if runtimeDetailsExpanded}
+      <div
+        class="mt-1 flex flex-col gap-0.5 text-[0.55rem] text-surface-500 uppercase tracking-tighter"
+      >
+        <div class="flex justify-between">
+          <span
+            >BPM {$tempoState.bpm.toFixed(2)} [{$tempoState.source}] Conf: {$tempoState.confidence.toFixed(
+              2,
+            )} Taps: {$tempoState.tapCount}</span
+          >
+          <span>Sec: <span class="text-surface-200">{$activeSection}</span></span>
+        </div>
+        <div class="flex justify-between">
+          <span
+            >FFmpeg: {$runtimeCapabilities.nativeFfmpeg ? "Yes" : "No"} Rust: {$runtimeCapabilities.rustFfmpegFeature
+              ? "Yes"
+              : "No"}</span
+          >
+          <span
+            >Queue: <span class="text-surface-200">{$scheduledActions.length}</span
+            ></span
+          >
+        </div>
+        <div class="flex justify-between">
+          <span class="text-emerald-300"
+            >Detected BPM: {$detectedTempo.bpm !== null
+              ? $detectedTempo.bpm.toFixed(2)
+              : "N/A"}</span
+          >
+          <span class="text-emerald-300"
+            >Detected Conf: {$detectedTempo.confidence !== null
+              ? `${($detectedTempo.confidence * 100).toFixed(0)}%`
+              : "N/A"}</span
+          >
+        </div>
+        <div class="flex justify-between gap-2">
+          <span>{capabilityTruth.engineSummary}</span>
+          <span class={capabilityTruth.tone === "error" ? "text-error-300" : "text-emerald-300"}>
+            {capabilityTruth.integrationNote}
+          </span>
+        </div>
+      </div>
+    {/if}
   </div>
 </div>

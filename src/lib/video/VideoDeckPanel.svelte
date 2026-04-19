@@ -18,6 +18,7 @@
     automationBounds,
     automationRuntime,
     audioBands,
+    essentiaAnalysis,
     midiTriggerStreams,
     reactiveEnvelope,
     runtimeCapabilities,
@@ -288,6 +289,15 @@
   let timeShaperTriggerLabel = "20Hz–14kHz";
   let transportTimeSeconds = 0;
   let recentTimeShaperEvents: TimeShaperTriggerEvent[] = [];
+  let triggerMonitorSections: Array<{
+    id: string;
+    label: string;
+    section: string;
+    start: number;
+    end: number;
+    duration: number;
+    energy: number;
+  }> = [];
 
   $: selectedClipId = $videoDeckAuthority.selectedClipId;
   $: authorityStatus = $videoDeckAuthority.status;
@@ -331,6 +341,7 @@
   $: timeShaperTriggerLabel = `${formatFrequencyLabel($reactiveEnvelope.rangeStartHz)}–${formatFrequencyLabel($reactiveEnvelope.rangeEndHz)}`;
   $: transportTimeSeconds = getTransportTimeSeconds();
   $: recentTimeShaperEvents = $timeShaperRecentEvents.slice(-16);
+  $: triggerMonitorSections = $essentiaAnalysis.sections;
   $: enforceSilentVideoElement(player);
   $: enforceSilentVideoElement(prewarmPlayer);
   $: if (webGpuEngineReady) {
@@ -1174,141 +1185,213 @@
 
         <div class="absolute bottom-1 w-full px-1 z-10">
           <div
-            class="flex justify-between items-center bg-surface-950/90 border border-surface-800 rounded-sm p-1 backdrop-blur-sm"
+            class="flex flex-col gap-1 bg-surface-950/90 border border-surface-800 rounded-sm p-1 backdrop-blur-sm"
           >
-            <div class="flex gap-1">
-              <button
-                class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
-                aria-label="Play selected clip"
-                on:click={play}>▶</button
-              >
-              <button
-                class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
-                aria-label="Pause selected clip"
-                on:click={pause}>⏸</button
-              >
-              <button
-                class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
-                aria-label="Stop selected clip"
-                on:click={stop}>⏹</button
-              >
+            <div class="flex flex-wrap items-center justify-between gap-1">
+              <div class="flex items-center gap-1">
+                <button
+                  class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
+                  aria-label="Play selected clip"
+                  on:click={play}>▶</button
+                >
+                <button
+                  class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
+                  aria-label="Pause selected clip"
+                  on:click={pause}>⏸</button
+                >
+                <button
+                  class="btn btn-sm bg-surface-800 border border-surface-700 hover:bg-surface-700 text-[0.6rem] px-2 py-0.5"
+                  aria-label="Stop selected clip"
+                  on:click={stop}>⏹</button
+                >
+              </div>
+
+              <div class="flex flex-wrap items-center gap-1">
+                <button
+                  class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {envelopeGateEnabled
+                    ? 'border-primary-500 bg-primary-500/20 text-primary-400'
+                    : 'border-surface-700 bg-surface-800 text-surface-400'}"
+                  title="Gate auto-cycling by audio onsets. When on, clips repeat until the onset counter reaches the target; when off, quantized boundaries count instead."
+                  on:click={toggleEnvelopeGate}
+                >
+                  GATE {envelopeGateEnabled ? "ON" : "OFF"}
+                </button>
+                <button
+                  class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {speedRampEnabled
+                    ? 'border-primary-500 bg-primary-500/20 text-primary-400'
+                    : 'border-surface-700 bg-surface-800 text-surface-400'}"
+                  title="Toggle bottom timeline speed automation. The visible speed lane drives the actual playback rate while TimeShaper handles source-time remapping."
+                  on:click={() => {
+                    speedRampEnabled = !speedRampEnabled;
+                    if (!speedRampEnabled && player) {
+                      player.playbackRate = 1;
+                      currentPlaybackRate = 1;
+                    }
+                  }}
+                >
+                  RAMP {speedRampEnabled ? "ON" : "OFF"}
+                </button>
+                <div class="flex items-center gap-1 rounded-sm border border-surface-700 bg-surface-900 px-1 py-0.5">
+                  <button
+                    class="px-1.5 py-0.5 text-[0.52rem] font-bold uppercase rounded-sm {timeShaperPanelTab === 'presets'
+                      ? 'bg-primary-500/20 text-primary-300'
+                      : 'text-surface-500 hover:bg-surface-800'}"
+                    aria-pressed={timeShaperPanelTab === "presets"}
+                    on:click={() => {
+                      timeShaperPanelTab = "presets";
+                      timeShaperPanelCollapsed = false;
+                    }}
+                  >
+                    Presets
+                  </button>
+                  <button
+                    class="px-1.5 py-0.5 text-[0.52rem] font-bold uppercase rounded-sm {timeShaperPanelTab === 'triggers'
+                      ? 'bg-primary-500/20 text-primary-300'
+                      : 'text-surface-500 hover:bg-surface-800'}"
+                    aria-pressed={timeShaperPanelTab === "triggers"}
+                    on:click={() => {
+                      timeShaperPanelTab = "triggers";
+                      timeShaperPanelCollapsed = false;
+                    }}
+                  >
+                    Triggers
+                  </button>
+                  <button
+                    class="px-1.5 py-0.5 text-[0.52rem] font-bold uppercase rounded-sm border border-surface-700 bg-surface-950 text-surface-300"
+                    aria-expanded={!timeShaperPanelCollapsed}
+                    on:click={() => (timeShaperPanelCollapsed = !timeShaperPanelCollapsed)}
+                    title="Collapse this panel to give the viewer more room."
+                  >
+                    {timeShaperPanelCollapsed ? "Show" : "Hide"}
+                  </button>
+                </div>
+              </div>
             </div>
-	            <div
-	              class="flex flex-wrap items-center gap-1 px-1 py-0.5 rounded-sm border border-surface-700 bg-surface-900"
-	              data-testid="timeshaper-preset-controls"
-	            >
-	              <button
-                class="btn btn-sm text-[0.58rem] px-1.5 py-0.5 border font-bold {timeShaperEnabled
-                  ? 'border-primary-500 bg-primary-500/20 text-primary-400'
-                  : 'border-surface-700 bg-surface-800 text-surface-400'}"
-                title="Toggle video TimeShaper. When enabled, the selected preset can stutter, scratch, reverse, or drag the current clip's source time."
-                on:click={() => {
-                  timeShaperEnabled = !timeShaperEnabled;
-                  timeShaperLastTriggeredAtMs = null;
-                  timeShaperActiveUntilMs = 0;
-                  timeShaperNextTriggerAllowedAtMs = 0;
-                  if (!timeShaperEnabled) timeShaperStatus = "TimeShaper bypassed";
-                }}
-              >
-                TS {timeShaperEnabled ? "ON" : "OFF"}
-              </button>
-              <label for="timeshaper-preset" class="sr-only">TimeShaper curve preset</label>
-              <select
-                id="timeshaper-preset"
-                bind:value={selectedTimeShapePresetId}
-                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
-                aria-label="TimeShaper curve preset"
-                title="Choose the preset curve that remaps video timing with stutters, scratches, tape-stop drags, or easing ramps."
-              >
-                {#each TIME_SHAPE_GESTURE_PRESETS as preset}
-                  <option value={preset.id}>{preset.label}</option>
-                {/each}
-              </select>
-              <label for="timeshaper-source" class="text-[0.52rem] text-surface-400 uppercase font-bold">Source</label>
-              <select
-                id="timeshaper-source"
-                bind:value={$timeShaperTriggerSource}
-                class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
-                aria-label="TimeShaper trigger source"
-              >
-                <option value="audio">Audio</option>
-                <option value="midi">MIDI</option>
-                <option value="hybrid">Hybrid</option>
-              </select>
-              <svg
-                class="h-8 w-24 rounded-sm border border-surface-700 bg-surface-950"
-                viewBox="0 0 100 100"
-                preserveAspectRatio="none"
-                aria-label="Visible TimeShaper preset curve"
-                data-testid="timeshaper-curve-preview"
-              >
-                <rect x="0" y="0" width="100" height="100" fill="rgba(15,23,42,0.92)" />
-                <path d="M0 50 H100" stroke="rgba(148,163,184,0.35)" stroke-width="1" />
-                <polyline
-                  points={timeShapePreviewPoints}
-                  fill="none"
-                  stroke="rgb(190,242,100)"
-                  stroke-width="3"
-                  stroke-linejoin="round"
-                  stroke-linecap="round"
-                />
-                <line x1={timeShapePreviewPhase} x2={timeShapePreviewPhase} y1="0" y2="100" stroke="rgb(245,158,11)" stroke-width="1.5" />
-              </svg>
-	              <label for="timeshaper-mix" class="text-[0.52rem] text-surface-400 uppercase font-bold">Mix</label>
-              <input
-                id="timeshaper-mix"
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                bind:value={timeShaperMix}
-                class="w-14 h-1 accent-primary-500"
-                aria-label="TimeShaper mix amount"
-                title="Dry/wet amount for TimeShaper. 0 keeps the base playback/ramp behavior, while 1 applies the full source-time and playback-rate modulation for the selected preset."
-              />
-              <label for="timeshaper-cooldown" class="text-[0.52rem] text-surface-400 uppercase font-bold">Cool</label>
-              <input
-                id="timeshaper-cooldown"
-                type="range"
-                min="220"
-                max="3200"
-                step="20"
-                bind:value={timeShaperCooldownMs}
-                class="w-14 h-1 accent-primary-500"
-                aria-label="TimeShaper cooldown"
-                title="Minimum wait before TimeShaper can retrigger again after a punch."
-              />
-              <span
-                class="rounded-sm border border-surface-700 bg-surface-950 px-1 py-0.5 text-[0.52rem] font-mono text-surface-300"
-                title="TimeShaper cooldown seconds"
-              >
-                {(timeShaperCooldownMs / 1000).toFixed(2)}s
-              </span>
+
+            <div class="grid gap-1 md:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)]">
               <div
-                class="rounded-sm border border-surface-700 bg-surface-950 px-1.5 py-0.5 text-[0.56rem] font-mono text-primary-200"
-                aria-label="TimeShaper trigger range"
-                title="TimeShaper now follows the Audio Reactive panel's draggable effect span instead of a separate low/mid/high/full selector."
+                class="flex min-w-0 flex-wrap items-center gap-1 rounded-sm border border-surface-700 bg-surface-900 px-1 py-0.5"
+                data-testid="timeshaper-preset-controls"
               >
-	                FX {timeShaperTriggerLabel}
-	              </div>
-	              <label for="timeshaper-trigger-shift" class="text-[0.52rem] text-surface-400 uppercase font-bold">Shift</label>
-	              <input
-	                id="timeshaper-trigger-shift"
-	                type="range"
-	                min="-250"
-	                max="250"
-	                step="1"
-	                bind:value={$timeShaperTriggerShiftMs}
-	                class="w-16 h-1 accent-primary-500"
-	                aria-label="TimeShaper trigger shift"
-	                title="Move event-triggered envelopes earlier or later in milliseconds."
-	              />
-	              <span class="text-[0.5rem] font-mono text-surface-400 w-12 text-right">
-	                {$timeShaperTriggerShiftMs}ms
-	              </span>
-	              <div
-	                class="flex items-center gap-1"
-	                data-testid="onset-progress-meter"
+                <button
+                  class="btn btn-sm text-[0.58rem] px-1.5 py-0.5 border font-bold {timeShaperEnabled
+                    ? 'border-primary-500 bg-primary-500/20 text-primary-400'
+                    : 'border-surface-700 bg-surface-800 text-surface-400'}"
+                  title="Toggle video TimeShaper. When enabled, the selected preset can stutter, scratch, reverse, or drag the current clip's source time."
+                  on:click={() => {
+                    timeShaperEnabled = !timeShaperEnabled;
+                    timeShaperLastTriggeredAtMs = null;
+                    timeShaperActiveUntilMs = 0;
+                    timeShaperNextTriggerAllowedAtMs = 0;
+                    if (!timeShaperEnabled) timeShaperStatus = "TimeShaper bypassed";
+                  }}
+                >
+                  TS {timeShaperEnabled ? "ON" : "OFF"}
+                </button>
+                <label for="timeshaper-preset" class="sr-only">TimeShaper curve preset</label>
+                <select
+                  id="timeshaper-preset"
+                  bind:value={selectedTimeShapePresetId}
+                  class="min-w-0 flex-1 bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
+                  aria-label="TimeShaper curve preset"
+                  title="Choose the preset curve that remaps video timing with stutters, scratches, tape-stop drags, or easing ramps."
+                >
+                  {#each TIME_SHAPE_GESTURE_PRESETS as preset}
+                    <option value={preset.id}>{preset.label}</option>
+                  {/each}
+                </select>
+                <label for="timeshaper-source" class="text-[0.52rem] text-surface-400 uppercase font-bold">Source</label>
+                <select
+                  id="timeshaper-source"
+                  bind:value={$timeShaperTriggerSource}
+                  class="bg-surface-950 border border-surface-700 rounded-sm px-1 py-0.5 text-[0.56rem] font-mono text-surface-200"
+                  aria-label="TimeShaper trigger source"
+                >
+                  <option value="audio">Audio</option>
+                  <option value="midi">MIDI</option>
+                  <option value="hybrid">Hybrid</option>
+                </select>
+                <svg
+                  class="h-7 w-18 shrink-0 rounded-sm border border-surface-700 bg-surface-950"
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                  aria-label="Visible TimeShaper preset curve"
+                  data-testid="timeshaper-curve-preview"
+                >
+                  <rect x="0" y="0" width="100" height="100" fill="rgba(15,23,42,0.92)" />
+                  <path d="M0 50 H100" stroke="rgba(148,163,184,0.35)" stroke-width="1" />
+                  <polyline
+                    points={timeShapePreviewPoints}
+                    fill="none"
+                    stroke="rgb(190,242,100)"
+                    stroke-width="3"
+                    stroke-linejoin="round"
+                    stroke-linecap="round"
+                  />
+                  <line x1={timeShapePreviewPhase} x2={timeShapePreviewPhase} y1="0" y2="100" stroke="rgb(245,158,11)" stroke-width="1.5" />
+                </svg>
+              </div>
+
+              <div class="flex min-w-0 flex-wrap items-center gap-1 rounded-sm border border-surface-700 bg-surface-900 px-1 py-0.5">
+                <div
+                  class="flex items-center gap-1 rounded-sm border border-surface-700 bg-surface-950 px-1.5 py-0.5 text-[0.56rem] font-mono text-primary-200"
+                  aria-label="TimeShaper trigger range"
+                  title="TimeShaper now follows the Audio Reactive panel's draggable effect span instead of a separate low/mid/high/full selector."
+                >
+                  FX {timeShaperTriggerLabel}
+                </div>
+                <label for="timeshaper-mix" class="text-[0.52rem] text-surface-400 uppercase font-bold">Mix</label>
+                <input
+                  id="timeshaper-mix"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  bind:value={timeShaperMix}
+                  class="w-14 h-1 accent-primary-500"
+                  aria-label="TimeShaper mix amount"
+                  title="Dry/wet amount for TimeShaper. 0 keeps the base playback/ramp behavior, while 1 applies the full source-time and playback-rate modulation for the selected preset."
+                />
+                <label for="timeshaper-cooldown" class="text-[0.52rem] text-surface-400 uppercase font-bold">Cool</label>
+                <input
+                  id="timeshaper-cooldown"
+                  type="range"
+                  min="220"
+                  max="3200"
+                  step="20"
+                  bind:value={timeShaperCooldownMs}
+                  class="w-14 h-1 accent-primary-500"
+                  aria-label="TimeShaper cooldown"
+                  title="Minimum wait before TimeShaper can retrigger again after a punch."
+                />
+                <span
+                  class="rounded-sm border border-surface-700 bg-surface-950 px-1 py-0.5 text-[0.52rem] font-mono text-surface-300"
+                  title="TimeShaper cooldown seconds"
+                >
+                  {(timeShaperCooldownMs / 1000).toFixed(2)}s
+                </span>
+                <label for="timeshaper-trigger-shift" class="text-[0.52rem] text-surface-400 uppercase font-bold">Shift</label>
+                <input
+                  id="timeshaper-trigger-shift"
+                  type="range"
+                  min="-250"
+                  max="250"
+                  step="1"
+                  bind:value={$timeShaperTriggerShiftMs}
+                  class="w-16 h-1 accent-primary-500"
+                  aria-label="TimeShaper trigger shift"
+                  title="Move event-triggered envelopes earlier or later in milliseconds."
+                />
+                <span class="text-[0.5rem] font-mono text-surface-400 w-12 text-right">
+                  {$timeShaperTriggerShiftMs}ms
+                </span>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-1">
+              <div
+                class="flex flex-wrap items-center gap-1 rounded-sm border border-surface-700 bg-surface-900 px-1 py-0.5"
+                data-testid="onset-progress-meter"
                 title="Accumulated onsets for the current clip. Filled dots and bar show progress toward the switch target."
               >
                 <span class="text-[0.52rem] text-surface-400 font-mono">
@@ -1336,112 +1419,51 @@
                     style={`width:${getOnsetProgress() * 100}%`}
                   ></div>
                 </div>
+                <label for="onset-switch-target" class="text-[0.52rem] text-surface-400 uppercase font-bold">Onsets</label>
+                <input
+                  id="onset-switch-target"
+                  type="number"
+                  min="1"
+                  max="32"
+                  step="1"
+                  bind:value={onsetSwitchTarget}
+                  on:input={applyOnsetTarget}
+                  class="w-10 bg-surface-950 border border-surface-700 rounded-sm px-1 py-0 text-[0.52rem] font-mono text-surface-300 text-right"
+                  aria-label="Onsets before next clip"
+                  title="The current clip repeats until this many audio onsets are counted, then the next active matrix clip is selected on the quantized beat/bar boundary."
+                />
               </div>
-              <label for="onset-switch-target" class="text-[0.52rem] text-surface-400 uppercase font-bold">Onsets</label>
-              <input
-                id="onset-switch-target"
-                type="number"
-                min="1"
-                max="32"
-                step="1"
-                bind:value={onsetSwitchTarget}
-                on:input={applyOnsetTarget}
-                class="w-10 bg-surface-950 border border-surface-700 rounded-sm px-1 py-0 text-[0.52rem] font-mono text-surface-300 text-right"
-                aria-label="Onsets before next clip"
-	                title="The current clip repeats until this many audio onsets are counted, then the next active matrix clip is selected on the quantized beat/bar boundary."
-	              />
-	            </div>
-            <button
-              class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {envelopeGateEnabled
-                ? 'border-primary-500 bg-primary-500/20 text-primary-400'
-                : 'border-surface-700 bg-surface-800 text-surface-400'}"
-              title="Gate auto-cycling by audio onsets. When on, clips repeat until the onset counter reaches the target; when off, quantized boundaries count instead."
-              on:click={toggleEnvelopeGate}
-            >
-              GATE {envelopeGateEnabled ? "ON" : "OFF"}
-            </button>
-            <button
-              class="btn btn-sm text-[0.6rem] px-2 py-0.5 border font-bold {speedRampEnabled
-                ? 'border-primary-500 bg-primary-500/20 text-primary-400'
-                : 'border-surface-700 bg-surface-800 text-surface-400'}"
-              title="Toggle bottom timeline speed automation. The visible speed lane drives the actual playback rate while TimeShaper handles source-time remapping."
-              on:click={() => {
-                speedRampEnabled = !speedRampEnabled;
-                if (!speedRampEnabled && player) {
-                  player.playbackRate = 1;
-                  currentPlaybackRate = 1;
-                }
-              }}
-            >
-              RAMP {speedRampEnabled ? "ON" : "OFF"}
-            </button>
-            <div class="flex items-center gap-1 rounded-sm border border-surface-700 bg-surface-900 px-1 py-0.5">
-              <button
-                class="px-1.5 py-0.5 text-[0.52rem] font-bold uppercase rounded-sm {timeShaperPanelTab === 'presets'
-                  ? 'bg-primary-500/20 text-primary-300'
-                  : 'text-surface-500 hover:bg-surface-800'}"
-                aria-pressed={timeShaperPanelTab === "presets"}
-                on:click={() => {
-                  timeShaperPanelTab = "presets";
-                  timeShaperPanelCollapsed = false;
-                }}
-              >
-                Presets
-              </button>
-              <button
-                class="px-1.5 py-0.5 text-[0.52rem] font-bold uppercase rounded-sm {timeShaperPanelTab === 'triggers'
-                  ? 'bg-primary-500/20 text-primary-300'
-                  : 'text-surface-500 hover:bg-surface-800'}"
-                aria-pressed={timeShaperPanelTab === "triggers"}
-                on:click={() => {
-                  timeShaperPanelTab = "triggers";
-                  timeShaperPanelCollapsed = false;
-                }}
-              >
-                Triggers
-              </button>
-              <button
-                class="px-1.5 py-0.5 text-[0.52rem] font-bold uppercase rounded-sm border border-surface-700 bg-surface-950 text-surface-300"
-                aria-expanded={!timeShaperPanelCollapsed}
-                on:click={() => (timeShaperPanelCollapsed = !timeShaperPanelCollapsed)}
-                title="Collapse this panel to give the viewer more room."
-              >
-                {timeShaperPanelCollapsed ? "Show" : "Hide"}
-              </button>
-            </div>
-            <div
-              class="flex items-center gap-1 px-1 py-0.5 rounded-sm border border-surface-700 bg-surface-900"
-            >
-              <span class="text-[0.52rem] font-bold text-surface-400 uppercase"
-                >Skip</span
-              >
-              <input
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                bind:value={switchSkipChancePercent}
-                on:input={applySwitchSkipChance}
-                class="w-16 h-1 accent-primary-500"
-                aria-label="Random quantized switch bypass probability"
-                title="Random quantized switch bypass probability"
-              />
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="1"
-                bind:value={switchSkipChancePercent}
-                on:input={applySwitchSkipChance}
-                class="w-10 bg-surface-950 border border-surface-700 rounded-sm px-1 py-0 text-[0.52rem] font-mono text-surface-300 text-right"
-                aria-label="Skip chance percent"
-              />
-              <span class="text-[0.5rem] text-surface-500 font-mono">
-                {(switchSkipChancePercent / 100).toFixed(2)}
-              </span>
-            </div>
+
+              <div class="flex items-center gap-1 rounded-sm border border-surface-700 bg-surface-900 px-1 py-0.5">
+                <span class="text-[0.52rem] font-bold text-surface-400 uppercase">Skip</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  bind:value={switchSkipChancePercent}
+                  on:input={applySwitchSkipChance}
+                  class="w-16 h-1 accent-primary-500"
+                  aria-label="Random quantized switch bypass probability"
+                  title="Random quantized switch bypass probability"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  bind:value={switchSkipChancePercent}
+                  on:input={applySwitchSkipChance}
+                  class="w-10 bg-surface-950 border border-surface-700 rounded-sm px-1 py-0 text-[0.52rem] font-mono text-surface-300 text-right"
+                  aria-label="Skip chance percent"
+                />
+                <span class="text-[0.5rem] text-surface-500 font-mono">
+                  {(switchSkipChancePercent / 100).toFixed(2)}
+                </span>
+	              </div>
 	            </div>
 	          </div>
+          </div>
 	        {#if nextPrewarmClip}
           <video
             bind:this={prewarmPlayer}
@@ -1490,7 +1512,12 @@
             />
           {:else}
             <div class="flex flex-col gap-1">
-              <TriggerEventStrip events={recentTimeShaperEvents} transportTime={transportTimeSeconds} />
+              <TriggerEventStrip
+                events={recentTimeShaperEvents}
+                transportTime={transportTimeSeconds}
+                sections={triggerMonitorSections}
+                activeSection={$activeSection}
+              />
               <div class="text-[0.52rem] text-surface-500">
                 Recent MIDI/audio trigger hits stay here instead of covering the viewer.
               </div>

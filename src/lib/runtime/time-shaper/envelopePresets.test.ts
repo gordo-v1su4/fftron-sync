@@ -19,14 +19,20 @@ describe('time shaper envelope presets', () => {
     expect(sampleEnvelopePreset(easeOut, 0.2)).toBeGreaterThan(sampleEnvelopePreset(easeIn, 0.2));
   });
 
-  it('exposes the expected preset catalog', () => {
-    expect(TIME_SHAPER_ENVELOPE_PRESETS.map((preset) => preset.id)).toEqual([
-      'hold_step',
-      'linear',
+  it('includes the expanded reference-style preset families', () => {
+    const ids = TIME_SHAPER_ENVELOPE_PRESETS.map((preset) => preset.id);
+    expect(ids).toEqual(expect.arrayContaining([
+      'linear_attack',
+      'linear_release',
+      'linear_attack_release',
+      'sloped_attack_fast',
+      'sloped_wobble',
+      'silence',
+      'hard_on_off',
+      'hard_off_on',
+      'hard_on_off_on',
       'easy_ease',
-      'easy_ease_in',
-      'easy_ease_out',
-      'stutter_jump'
-    ]);
+      'stutter_jump',
+    ]));
   });
 });
